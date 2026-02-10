@@ -137,5 +137,5 @@ def max_dim(inp, dim=None, keepdim=False):
     return out
 
 
-def max_paddle(x, axis, keepdim):
+def max_paddle(x, axis = 0, keepdim = True):
     return max(x)
