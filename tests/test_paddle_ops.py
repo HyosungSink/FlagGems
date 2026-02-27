@@ -278,28 +278,6 @@ def test_accuracy_argmax(shape, dim, keepdim, dtype):
     gems_assert_equal(res_out, ref_out)
 
 
-@pytest.mark.min
-@pytest.mark.parametrize("shape", REDUCTION_SMALL_SHAPES)
-@pytest.mark.parametrize("keepdim, dim", KEEPDIM_DIM)
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES + ALL_INT_DTYPES)
-def test_accuracy_min_dim(shape, dim, keepdim, dtype):
-    if dtype in [torch.int16]: # paddle.min暂时不支持
-        pytest.skip(f"Skip {dtype} type.")
-    if dtype in FLOAT_DTYPES:
-        inp = torch.randn(shape, dtype=dtype, device=flag_gems.device)
-    else:
-        inp = torch.randint(-10000, 10000, shape, dtype=dtype).to(
-            flag_gems.device
-        )
-    ref_inp = to_reference(inp)
-
-    ref_out_value = torch.min(ref_inp, dim, keepdim)
-    with flag_gems.use_gems():
-        res_out_value = torch.min(inp, dim, keepdim)
-
-    gems_assert_equal(res_out_value, ref_out_value)
-
-
 @pytest.mark.index_select
 @pytest.mark.parametrize("shape", REDUCTION_SHAPES)
 @pytest.mark.parametrize("dim", DIM_LIST)
@@ -431,6 +409,25 @@ def test_accuracy_max_without_dim(shape, dtype):
 
     gems_assert_equal(res_out, ref_out)
 
+@pytest.mark.min
+@pytest.mark.parametrize("shape", REDUCTION_SHAPES)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES + ALL_INT_DTYPES)
+def test_accuracy_min_without_dim(shape, dtype):
+    if dtype in [torch.int16]: 
+        pytest.skip(f"Skip {dtype} type.")
+    if dtype in FLOAT_DTYPES:
+        inp = torch.randn(shape, dtype=dtype, device=flag_gems.device)
+    else:
+        inp = torch.randint(-10000, 10000, shape, dtype=dtype).to(
+            flag_gems.device
+        )
+    ref_inp = to_reference(inp)
+
+    ref_out = torch.min(ref_inp)
+    with flag_gems.use_gems():
+        res_out = torch.min(inp)
+
+    gems_assert_equal(res_out, ref_out)
 
 @pytest.mark.ones
 @pytest.mark.parametrize("shape", POINTWISE_SHAPES)

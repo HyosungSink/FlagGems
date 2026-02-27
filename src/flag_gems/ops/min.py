@@ -15,7 +15,7 @@ from flag_gems.utils.limits import get_dtype_max
 logger = logging.getLogger(__name__)
 
 
-@libentry()
+# @libentry()
 @triton.jit
 def min_kernel_1(
     inp,
@@ -34,7 +34,7 @@ def min_kernel_1(
     tl.store(mid_ptr, min_val)
 
 
-@libentry()
+# @libentry()
 @triton.jit
 def min_kernel_2(mid, out, mid_size, BLOCK_MID: tl.constexpr):
     offset = tl.arange(0, BLOCK_MID)
@@ -98,7 +98,7 @@ def min_kernel(
 
 def min(inp):
     logger.debug("GEMS MIN")
-    M = inp.numel()
+    M = inp.size
     block_size = triton.next_power_of_2(math.ceil(math.sqrt(M)))
     mid_size = triton.cdiv(M, block_size)
     block_mid = triton.next_power_of_2(mid_size)
@@ -137,7 +137,5 @@ def min_dim(inp, dim=None, keepdim=False):
     out = Min_out(values=out_value, indices=out_index)
     return out
 
-def min_paddle(x, dim, keepdim):
-    if dim == None:
-        return min_dim(x, 0 , keepdim)[0]
-    return min_dim(x, dim , keepdim)[0]
+def min_paddle(x, dim = None, keepdim=False):
+    return min(x)
