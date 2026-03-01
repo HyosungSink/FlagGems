@@ -4,27 +4,18 @@ _occupy_process = None
 _stop_event = None
 _started = False
 
-
 def occupy_gpu(gpu_id, size, ready_event, stop_event):
     import paddle
     import time
 
     paddle.device.set_device(f"gpu:{gpu_id}")
-    stream = paddle.device.Stream(priority=2)
 
     x = paddle.ones([size, size])
 
-    with paddle.device.stream_guard(stream):
-        x = x * 2 - 1
-
-    paddle.device.synchronize()
     ready_event.set()
 
     while not stop_event.is_set():
-        with paddle.device.stream_guard(stream):
             x = x * 2 - 1
-            # time.sleep(0.001)
-
 
 def warmup_paddle():
     import multiprocessing as mp
