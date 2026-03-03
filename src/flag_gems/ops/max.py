@@ -97,7 +97,8 @@ def max_kernel(
 def max(inp):
     logger.debug("GEMS MAX")
     inp = inp.contiguous()
-    M = inp.size
+    M = 1
+    for s in inp.shape: M *= s
     block_size = triton.next_power_of_2(math.ceil(math.sqrt(M)))
     mid_size = triton.cdiv(M, block_size)
     block_mid = triton.next_power_of_2(mid_size)
@@ -120,7 +121,9 @@ def max_dim(inp, dim=None, keepdim=False):
     inp = dim_compress(inp, dim)
     N = shape[dim]
     shape[dim] = 1
-    M = inp.size // N
+    M = 1
+    for s in inp.shape: M *= s
+    M = M // N
 
     out_value = torch.empty(shape, dtype=inp.dtype, device=inp.device)
     out_index = torch.empty(shape, dtype=torch.int64, device=inp.device)

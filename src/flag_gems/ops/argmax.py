@@ -221,7 +221,9 @@ def argmax(inp, dim=None, keepdim=False, *, dtype=None):
             return torch.zeros(out_shape, dtype=torch.int64, device=inp.device)
         N = shape[dim]
         M = math.prod(shape[:dim])
-        K = inp.size // M // N
+        K = 1
+        for s in inp.shape: K *= s
+        K = K // M // N
 
         inp = inp.contiguous()
 

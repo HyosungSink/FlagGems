@@ -60,7 +60,9 @@ def sum_kernel_2(mid, out, mid_size, BLOCK_MID: tl.constexpr):
 
 def sum(inp, *, dtype=None):
     logger.debug("GEMS SUM")
-    M = inp.numel().item()
+    # inp.size or inp.numel().item() will decrease the performance 
+    M = 1
+    for s in inp.shape: M *= s  
     if dtype is None:
         dtype = inp.dtype
         if dtype is torch.bool:

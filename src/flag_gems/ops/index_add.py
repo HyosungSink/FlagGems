@@ -224,7 +224,11 @@ def index_add(inp, dim, index, src, alpha=1):
     # ), "0 <= index < self.size(dim)"
     assert ((0 <= index) * (index < inp.size(dim))).all().item(), "0 <= index < self.size(dim)"
     assert dim >= -inp.ndim and dim < inp.ndim, "Invalid dim"
-    assert index.size == src.size(
+    index_size = 1
+    src_size = 1
+    for s in inp.shape: index_size *= s
+    for s in src.shape: src_size *= s
+    assert index_size == src_size(
         dim
     ), "The dimth dimension of source must have the same size as the length of index"
     assert (

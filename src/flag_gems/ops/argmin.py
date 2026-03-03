@@ -242,7 +242,9 @@ def argmin(inp, dim=None, keepdim=False, *, dtype=None):
         dim = dim % inp.ndim
         N = shape[dim]
         M = math.prod(shape[:dim])
-        K = inp.size // M // N
+        K = 1
+        for s in inp.shape: K *= s
+        K = K // M // N
 
         inp = inp.contiguous()
 

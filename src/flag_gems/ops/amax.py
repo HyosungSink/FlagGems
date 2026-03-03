@@ -122,7 +122,9 @@ def amax(inp, dim=None, keepdim=False):
         for i in dim:
             N *= shape[i]
             shape[i] = 1
-        M = inp.size // N
+        M = 1
+        for s in inp.shape: M *= s
+        M = M // N
 
         out = torch.empty(shape, dtype=dtype, device=inp.device)
 

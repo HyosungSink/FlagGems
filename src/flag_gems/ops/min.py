@@ -121,7 +121,9 @@ def min_dim(inp, dim=None, keepdim=False):
     inp = dim_compress(inp, dim)
     N = shape[dim]
     shape[dim] = 1
-    M = inp.size // N
+    M = 1
+    for s in inp.shape: M *= s
+    M = M // N
 
     out_value = torch.empty(shape, dtype=inp.dtype, device=inp.device)
     out_index = torch.empty(shape, dtype=torch.int64, device=inp.device)
