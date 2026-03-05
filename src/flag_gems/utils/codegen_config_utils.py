@@ -53,6 +53,8 @@ def sunrise_heuristics_for_num_warps(tile_size):
     else:
         return 32
 
+def enflame_heuristics_for_num_warps(tile_size):
+    return 4
 
 @dataclass
 class CodeGenConfig:
@@ -131,6 +133,13 @@ CODEGEN_COFIGS = {
         True,
         prefer_1d_tile=int(triton.__version__[0]) < 3,
     ),
+    vendors.ENFLAME: CodeGenConfig(
+        512 * 8,
+        (12, 1, 1),
+        4,
+        True,
+        prefer_1d_tile=int(triton.__version__[0]) < 3,
+    ),
 }
 
 HEURISTICS_CONFIG = {
@@ -140,6 +149,7 @@ HEURISTICS_CONFIG = {
     vendors.HYGON: hygon_heuristics_for_num_warps,
     vendors.TSINGMICRO: tsingmicro_heuristics_for_num_warps,
     vendors.SUNRISE: sunrise_heuristics_for_num_warps,
+    vendors.ENFLAME: enflame_heuristics_for_num_warps,
 }
 
 
