@@ -3,12 +3,12 @@ from .. import arch_version
 __all__ = []
 
 if arch_version == 300:
-    from .gcu300.concat_and_cache_mla import concat_and_cache_mla
+    from .gcu300.concat_and_cache_mla import concat_and_cache_mla  # noqa: F401
     from .gcu300.cross_entropy_loss import cross_entropy_loss
     from .gcu300.flash_mla import flash_mla
     from .gcu300.fused_add_rms_norm import fused_add_rms_norm
     from .gcu300.gelu_and_mul import gelu_and_mul
-    from .gcu300.rotary_embedding import apply_rotary_pos_emb
+    from .gcu300.rotary_embedding import apply_rotary_pos_emb  # noqa: F401
     from .gcu300.silu_and_mul import silu_and_mul
     from .gcu300.skip_layernorm import skip_layer_norm
 

@@ -225,7 +225,8 @@ class RmsNorm(torch.autograd.Function):
                 ROW_BLOCK_SIZE,
                 COL_BLOCK_SIZE,
             )
-            # TODO(haizhu.shao TBD) after support dim=0 in triton_gcu backend, we can directly use flag_gems.sum(partial_buffer, dim=0, dtype=x.dtype)
+            # TODO(haizhu.shao TBD) after support dim=0 in triton_gcu backend,
+            # we can directly use flag_gems.sum(partial_buffer, dim=0, dtype=x.dtype)
             dw = torch.sum(partial_buffer, dim=0).to(x.dtype).reshape(-1)
 
         return dx, None, dw, None

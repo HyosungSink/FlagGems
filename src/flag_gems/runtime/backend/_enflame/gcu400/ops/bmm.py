@@ -7,7 +7,6 @@ import triton.language as tl
 from flag_gems import runtime
 from flag_gems.runtime import torch_device_fn
 from flag_gems.utils import libentry, libtuner
-from flag_gems.utils import triton_lang_extension as tle
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +53,7 @@ def bmm_kernel(
 
         A = A_in + pid_b * M * K
         B = B_in + pid_b * K * N
-        O = O_in + pid_b * M * N
+        O_out = O_in + pid_b * M * N
 
         L_block_ptr = tl.make_block_ptr(
             base=A,
@@ -73,7 +72,7 @@ def bmm_kernel(
             order=(1, 0),
         )
         O_block_ptr = tl.make_block_ptr(
-            base=O,
+            base=O_out,
             shape=(M, N),
             strides=(stride_cm, stride_cn),
             offsets=(pid_m * BLOCK_M, pid_n * BLOCK_N),
@@ -102,7 +101,7 @@ def bmm_kernel(
             acc += tl.dot(a, b, out_dtype=tl.float32)
             L_block_ptr = tl.advance(L_block_ptr, (0, BLOCK_K))
             R_block_ptr = tl.advance(R_block_ptr, (BLOCK_K, 0))
-        c = acc.to(O.dtype.element_ty)
+        c = acc.to(O_out.dtype.element_ty)
         tl.store(
             O_block_ptr,
             c,

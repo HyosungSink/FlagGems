@@ -1,7 +1,7 @@
 import importlib
 import logging
 import os
-from typing import Callable, List, Mapping, Sequence, Tuple
+from typing import Callable, List, Mapping, Sequence
 
 import torch
 
@@ -709,7 +709,8 @@ def gcu_generate_repeat_kernel(
             code.newline()
 
             code.writeline(
-                "# stores, note that store to block pointer does not automatically cast the value to the pointer's dtype"
+                "# stores, note that store to block pointer does not "
+                "automatically cast the value to the pointer's dtype"
             )
 
             out_strides = _tuple_content(tuple(f"out0_stride{i}" for i in range(rank)))
@@ -753,8 +754,10 @@ def gcu_generate_repeat_kernel(
                     f"in0_ptr, ({shape}), ({in_strides}), ({offsets}), ({tile_sizes}), order=({order}))"
                 )
                 code.writeline(
-                    f"in0 = tl.load(in0_bptr, boundary_check=({order})).to(in0_ptr.type.element_ty) "
-                    "# workaround the bug on bool, we should use the original pointer's dtype(instead of block pointer's)"
+                    f"in0 = tl.load(in0_bptr, boundary_check=({order})).to("
+                    f"in0_ptr.type.element_ty) "
+                    "# workaround the bug on bool, we should use the "
+                    "original pointer's dtype(instead of block pointer's)"
                 )
                 code.newline()
                 # compute
@@ -763,7 +766,8 @@ def gcu_generate_repeat_kernel(
                 code.newline()
 
                 code.writeline(
-                    "# stores, note that store to block pointer does not automatically cast the value to the pointer's dtype"
+                    "# stores, note that store to block pointer does not "
+                    "automatically cast the value to the pointer's dtype"
                 )
 
                 out_strides = _tuple_content(
@@ -771,7 +775,8 @@ def gcu_generate_repeat_kernel(
                 )
                 code.writeline(
                     f"out0_bptr = tl.make_block_ptr("
-                    f"out0_ptr, ({shape}), ({out_strides}), ({offsets}), ({tile_sizes}), order=({order}))"
+                    f"out0_ptr, ({shape}), ({out_strides}), ({offsets}), "
+                    f"({tile_sizes}), order=({order}))"
                 )
                 code.writeline(
                     f"tl.store(out0_bptr, out0.to(out0_bptr.type.element_ty), boundary_check=({order}))"
@@ -843,7 +848,6 @@ class RepeatFunction:
         elif broadcast_dim == 1:
             limit = 1024 * 1024 * 16
             in_shape = list(x.shape)
-            dims_shape = sizes
             if x.ndim < ndim:
                 in_diff = ndim - x.ndim
                 for i in range(in_diff):

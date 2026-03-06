@@ -9,7 +9,7 @@ from flag_gems.utils import tl_extra_shim
 from ..utils.pointwise_dynamic import pointwise_dynamic
 
 try:
-    # _isfinited = tl_extra_shim.isfinited
+    _isfinited = tl_extra_shim.isfinited
     _finitef = tl_extra_shim.finitef
 except Exception:
     pass

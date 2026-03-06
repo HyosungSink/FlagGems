@@ -7,14 +7,9 @@
 3. 检查 inverse_indices 和 counts 的正确性
 """
 
-import numpy as np
 import torch
-from unique import (
-    _unique2,
-    simple_unique_flat,
-    sorted_indices_unique_flat,
-    sorted_quick_unique_flat,
-)
+
+from .unique import _unique2
 
 
 def verify_unique_result(
@@ -70,9 +65,9 @@ def verify_unique_result(
                     )[0][:10]
                     print(f"  前10个不匹配位置: {mismatch_idx.tolist()}")
                     for idx in mismatch_idx:
-                        print(
-                            f"    位置 {idx}: triton={triton_inverse_flat[idx].item()}, torch={torch_inverse_flat[idx].item()}"
-                        )
+                        triton_val = triton_inverse_flat[idx].item()
+                        torch_val = torch_inverse_flat[idx].item()
+                        print(f"    位置 {idx}: triton={triton_val}, torch={torch_val}")
 
                 # 检查是否存在溢出的特征（负数或异常大的值）
                 if triton_inverse_flat is not None:
@@ -152,7 +147,7 @@ def test_various_sizes(device="cuda"):
                 for err in errors:
                     print(f"    - {err}")
             else:
-                print(f"  ✅ 测试通过")
+                print("  ✅ 测试通过")
 
         except Exception as e:
             print(f"  ⚠️ 测试失败: {e}")
@@ -199,7 +194,7 @@ def test_edge_cases(device="cuda"):
                 for err in errors:
                     print(f"    - {err}")
             else:
-                print(f"  ✅ 测试通过")
+                print("  ✅ 测试通过")
         except Exception as e:
             print(f"  ⚠️ 测试失败: {e}")
 
@@ -238,7 +233,7 @@ def test_int32_overflow_specific(device="cuda"):
                 for err in errors:
                     print(f"      - {err}")
             else:
-                print(f"    ✅ 测试通过")
+                print("    ✅ 测试通过")
         except Exception as e:
             print(f"    ⚠️ 测试失败: {e}")
 
@@ -305,24 +300,28 @@ def detailed_debug(device="cuda"):
         data, sorted=True, return_inverse=True, return_counts=True
     )
 
-    print(f"\nTriton 结果:")
+    print("\nTriton 结果:")
     print(f"  unique 值数量: {triton_out.numel()}")
-    print(
-        f"  inverse_indices 范围: [{triton_inverse.min().item()}, {triton_inverse.max().item()}]"
-    )
-    print(f"  counts 范围: [{triton_counts.min().item()}, {triton_counts.max().item()}]")
+    triton_inv_min = triton_inverse.min().item()
+    triton_inv_max = triton_inverse.max().item()
+    print(f"  inverse_indices 范围: [{triton_inv_min}, {triton_inv_max}]")
+    triton_cnt_min = triton_counts.min().item()
+    triton_cnt_max = triton_counts.max().item()
+    print(f"  counts 范围: [{triton_cnt_min}, {triton_cnt_max}]")
     print(f"  counts 总和: {triton_counts.sum().item()}")
 
-    print(f"\nPyTorch 结果:")
+    print("\nPyTorch 结果:")
     print(f"  unique 值数量: {torch_out.numel()}")
-    print(
-        f"  inverse_indices 范围: [{torch_inverse.min().item()}, {torch_inverse.max().item()}]"
-    )
-    print(f"  counts 范围: [{torch_counts.min().item()}, {torch_counts.max().item()}]")
+    torch_inv_min = torch_inverse.min().item()
+    torch_inv_max = torch_inverse.max().item()
+    print(f"  inverse_indices 范围: [{torch_inv_min}, {torch_inv_max}]")
+    torch_cnt_min = torch_counts.min().item()
+    torch_cnt_max = torch_counts.max().item()
+    print(f"  counts 范围: [{torch_cnt_min}, {torch_cnt_max}]")
     print(f"  counts 总和: {torch_counts.sum().item()}")
 
     # 验证重建
-    print(f"\n验证重建:")
+    print("\n验证重建:")
     triton_reconstructed = triton_out[triton_inverse.ravel()]
     torch_reconstructed = torch_out[torch_inverse.ravel()]
 

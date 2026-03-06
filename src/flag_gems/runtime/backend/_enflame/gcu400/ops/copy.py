@@ -1,7 +1,3 @@
-import logging
-from typing import Optional
-
-import torch
 import triton
 
 from ..utils.pointwise_dynamic import pointwise_dynamic

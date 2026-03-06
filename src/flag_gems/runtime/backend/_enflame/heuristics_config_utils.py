@@ -183,10 +183,6 @@ def upsample_nearest2d_USE_INT32_IDX(args):
     return args["N"] * args["C"] * args["OH"] * args["OW"] <= (2**31 - 1)  # INT32 MAX
 
 
-def upsample_nearest2d_USE_INT32_IDX(args):
-    return args["N"] * args["C"] * args["OH"] * args["OW"] <= (2**31 - 1)  # INT32 MAX
-
-
 def batch_norm_heur_block_m(args):
     return min(2048, triton.next_power_of_2(args["batch_dim"]))
 

@@ -1,5 +1,4 @@
 import logging
-import math
 from collections import namedtuple
 
 import torch
@@ -9,7 +8,6 @@ import triton.language as tl
 from flag_gems import runtime
 from flag_gems.runtime import torch_device_fn
 from flag_gems.utils import dim_compress, libentry, libtuner
-from flag_gems.utils import triton_lang_extension as tle
 from flag_gems.utils.limits import get_dtype_min
 
 logger = logging.getLogger(__name__)
@@ -86,7 +84,6 @@ def max_kernel_dim_low(
     for tile_id_m in tl.range(pid_m, num_tile, step):
         m_offset = tile_id_m * BLOCK_M + tl.arange(0, BLOCK_M)
         dtype = inp.type.element_ty
-        acc_type = tl.float32 if dtype is tl.bfloat16 else dtype
         min_value = get_dtype_min(dtype)
         if inp.type.element_ty == tl.int64:
             min_value = 0
@@ -147,11 +144,9 @@ def max_kernel_dim_high(
         n_offset = tile_id_n * BLOCK_N + tl.arange(0, BLOCK_N)
 
         dtype = inp.type.element_ty
-        acc_type = tl.float32 if dtype is tl.bfloat16 else dtype
         min_value = get_dtype_min(dtype)
         if inp.type.element_ty == tl.int64:
             min_value = 0
-        # result_value = tl.full([BLOCK_N], value=min_value, dtype=acc_type)
         # result_index = tl.zeros([BLOCK_N], dtype=tl.int32)
         m_offset_0 = tl.arange(0, BLOCK_M)
         offset_0 = m_offset_0[:, None] * N + n_offset[None, :]
@@ -209,11 +204,9 @@ def max_kernel_dim_mid(
         out_value = out_value_in + tile_id_b * N
         out_index = out_index_in + tile_id_b * N
         dtype = inpIn.type.element_ty
-        acc_type = tl.float32 if dtype is tl.bfloat16 else dtype
         min_value = get_dtype_min(dtype)
         if inpIn.type.element_ty == tl.int64:
             min_value = 0
-        # result_value = tl.full([BLOCK_N], value=min_value, dtype=acc_type)
         # result_index = tl.zeros([BLOCK_N], dtype=tl.int32)
         m_offset_0 = tl.arange(0, BLOCK_M)
         offset_0 = m_offset_0[:, None] * N + n_offset[None, :]

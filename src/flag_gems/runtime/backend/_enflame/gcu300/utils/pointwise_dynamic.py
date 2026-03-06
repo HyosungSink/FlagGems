@@ -1048,7 +1048,9 @@ class WrapperGenerator:
                 code.writeline(f"in{i}_strides = in{i}.stride()")
                 code.writeline(f"FlagOfNotUseDMA |= any(s == 0 for s in in{i}_strides)")
                 code.writeline(
-                    f"FlagOfNotUseDMA |= (lambda s: len(s) >= 2 and not all((max(a,b) % min(a,b) == 0 and a != b) for i, a in enumerate(s) for b in s[i+1:]))([x for x in in{i}_strides if x != 0])"
+                    f"FlagOfNotUseDMA |= (lambda s: len(s) >= 2 and not all("
+                    f"(max(a,b) % min(a,b) == 0 and a != b) for i, a in enumerate(s) "
+                    f"for b in s[i+1:]))([x for x in in{i}_strides if x != 0])"
                 )
                 if not with_block_pointer:
                     continue
@@ -1060,7 +1062,9 @@ class WrapperGenerator:
                 code.writeline(f"out{i}_strides = out{i}.stride()")
                 code.writeline(f"FlagOfNotUseDMA |= any(s == 0 for s in in{i}_strides)")
                 code.writeline(
-                    f"FlagOfNotUseDMA |= (lambda s: len(s) >= 2 and not all((max(a,b) % min(a,b) == 0 and a != b) for i, a in enumerate(s) for b in s[i+1:]))([x for x in out{i}_strides if x != 0])"
+                    f"FlagOfNotUseDMA |= (lambda s: len(s) >= 2 and not all("
+                    f"(max(a,b) % min(a,b) == 0 and a != b) for i, a in enumerate(s) "
+                    f"for b in s[i+1:]))([x for x in out{i}_strides if x != 0])"
                 )
                 if not with_block_pointer:
                     continue
@@ -1075,7 +1079,8 @@ class WrapperGenerator:
             with code.indent():
                 code.writeline("factor = max(1, factor // 4)")
                 code.writeline(
-                    f"tile_sizes = heuristics_for_tile_size_with_mmu_constraint({max_tile_size} * factor, out0.element_size(), out0_strides, *shape)"
+                    f"tile_sizes = heuristics_for_tile_size_with_mmu_constraint("
+                    f"{max_tile_size} * factor, out0.element_size(), out0_strides, *shape)"
                 )
             code.writeline("else:")
             with code.indent():
@@ -1084,7 +1089,8 @@ class WrapperGenerator:
                 )
             code.writeline("tile_size = math.prod(tile_sizes)")
             code.writeline(
-                "num_tiles = math.prod(triton.cdiv(size, tile_size) for size, tile_size in zip(shape, tile_sizes))"
+                "num_tiles = math.prod(triton.cdiv(size, tile_size) "
+                "for size, tile_size in zip(shape, tile_sizes))"
             )
             max_grid_size0 = self.config.max_grid_size[0]
             code.writeline(f"num_ctas = min({max_grid_size0}, num_tiles)")
@@ -1117,7 +1123,9 @@ class WrapperGenerator:
                 code.writeline(f"in{i}_strides = in{i}.stride()")
                 code.writeline(f"FlagOfNotUseDMA |= any(s == 0 for s in in{i}_strides)")
                 code.writeline(
-                    f"FlagOfNotUseDMA |= (lambda s: len(s) >= 2 and not all((max(a,b) % min(a,b) == 0 and a != b) for i, a in enumerate(s) for b in s[i+1:]))([x for x in in{i}_strides if x != 0])"
+                    f"FlagOfNotUseDMA |= (lambda s: len(s) >= 2 and not all("
+                    f"(max(a,b) % min(a,b) == 0 and a != b) for i, a in enumerate(s) "
+                    f"for b in s[i+1:]))([x for x in in{i}_strides if x != 0])"
                 )
             for i in range(schema.num_output_tensors()):
                 code.writeline(f"out{i}_strides = out{i}.stride()")
@@ -1125,7 +1133,9 @@ class WrapperGenerator:
                     f"FlagOfNotUseDMA |= any(s == 0 for s in out{i}_strides)"
                 )
                 code.writeline(
-                    f"FlagOfNotUseDMA |= (lambda s: len(s) >= 2 and not all((max(a,b) % min(a,b) == 0 and a != b) for i, a in enumerate(s) for b in s[i+1:]))([x for x in out{i}_strides if x != 0])"
+                    f"FlagOfNotUseDMA |= (lambda s: len(s) >= 2 and not all("
+                    f"(max(a,b) % min(a,b) == 0 and a != b) for i, a in enumerate(s) "
+                    f"for b in s[i+1:]))([x for x in out{i}_strides if x != 0])"
                 )
             code.writeline("if FlagOfNotUseDMA:")
             with code.indent():
@@ -1157,7 +1167,7 @@ class WrapperGenerator:
         code.writeline("stages=2 if num_tasks // tile_size >= 4 else 2")
         code.writeline("with torch_device_fn.device(in0.device.index):")
         with code.indent():
-            code.writeline(f"if FlagOfNotUseDMA: ")
+            code.writeline("if FlagOfNotUseDMA:")
             with code.indent():
                 code.writeline(f"{self.jit_fn_name}_stride_constexpr[grid](")
                 with code.indent():
@@ -1192,7 +1202,7 @@ class WrapperGenerator:
                             order = ", ".join(
                                 f"out{i}_stride_order[{j}]" for j in range(ndim)
                             )
-                            code.writeline(f"{order}, # stride orderfor out{i}")
+                            code.writeline(f"{order}, # stride order for out{i}")
 
                         shape_args: str = ", ".join(f"shape[{i}]" for i in range(ndim))
                         code.writeline(f"{shape_args}, # task indexing space")
@@ -1205,7 +1215,7 @@ class WrapperGenerator:
                     code.writeline("num_warps=num_warps,")
                     code.writeline("stages=stages,")
                 code.writeline(")")
-            code.writeline("else: ")
+            code.writeline("else:")
             with code.indent():
                 code.writeline(f"{self.jit_fn_name}[grid](")
                 with code.indent():
@@ -1240,7 +1250,7 @@ class WrapperGenerator:
                             order = ", ".join(
                                 f"out{i}_stride_order[{j}]" for j in range(ndim)
                             )
-                            code.writeline(f"{order}, # stride orderfor out{i}")
+                            code.writeline(f"{order}, # stride order for out{i}")
 
                         shape_args: str = ", ".join(f"shape[{i}]" for i in range(ndim))
                         code.writeline(f"{shape_args}, # task indexing space")
@@ -1264,7 +1274,7 @@ class WrapperGenerator:
         code.writeline("# kernel launch")
         code.writeline("with torch_device_fn.device(in0.device.index):")
         with code.indent():
-            code.writeline(f"if FlagOfNotUseDMA: ")
+            code.writeline("if FlagOfNotUseDMA:")
             with code.indent():
                 code.writeline(f"{self.jit_fn_name}_stride_constexpr[grid](")
                 with code.indent():
@@ -1297,7 +1307,7 @@ class WrapperGenerator:
                         code.writeline("one_tile_per_cta=one_tile_per_cta,")
                     code.writeline("num_warps=num_warps,")
                 code.writeline(")")
-            code.writeline("else: ")
+            code.writeline("else:")
             with code.indent():
                 code.writeline(f"{self.jit_fn_name}[grid](")
                 with code.indent():

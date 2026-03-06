@@ -1,12 +1,6 @@
-import enum
-import functools
-import operator
 import os
-from typing import Iterable, Sequence, Tuple
 
-import torch
 import triton
-import triton.language as tl
 from _enflame.gcu300.utils.codegen_config_utils import get_heuristics_for_num_warps
 
 ENFLAME_GCU300_4SIPS = int(os.getenv("ENFLAME_GCU300_4SIPS", "0"))

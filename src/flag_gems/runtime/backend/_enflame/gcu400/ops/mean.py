@@ -1,6 +1,4 @@
 import logging
-import math
-import sys
 
 import torch
 import triton
@@ -9,8 +7,6 @@ import triton.language as tl
 from flag_gems import runtime
 from flag_gems.runtime import torch_device_fn
 from flag_gems.utils import dim_compress, libentry, libtuner
-
-from ..utils.config_utils import MAX_GRID_DIM
 
 logger = logging.getLogger(__name__)
 

@@ -3,15 +3,13 @@
 直接验证 int32 修改是否导致结果偏差
 """
 
-import os
 import sys
 
-import numpy as np
 import torch
 
 # 导入两个版本
-from unique import _unique2 as unique_int32
-from unique_int64 import _unique2_int64 as unique_int64
+from .unique import _unique2 as unique_int32
+from .unique_int64 import _unique2_int64 as unique_int64
 
 
 def compare_results(in0, return_inverse=True, return_counts=True, verbose=True):
@@ -142,7 +140,7 @@ def analyze_differences(results, in0, verbose=True):
         inv64_flat = inv64.ravel() if inv64 is not None else None
         inv_pt_flat = inv_pt.ravel()
 
-        print(f"  inverse_indices 范围:")
+        print("  inverse_indices 范围:")
         print(f"    int32: [{inv32_flat.min().item()}, {inv32_flat.max().item()}]")
         if inv64_flat is not None:
             print(f"    int64: [{inv64_flat.min().item()}, {inv64_flat.max().item()}]")
@@ -179,11 +177,11 @@ def analyze_differences(results, in0, verbose=True):
             if verbose:
                 mismatch_idx = torch.where(inv32_flat != inv64_flat)[0]
                 if len(mismatch_idx) > 0:
-                    print(f"    int32 vs int64 差异位置（前5个）:")
+                    print("    int32 vs int64 差异位置（前5个）:")
                     for idx in mismatch_idx[:5]:
-                        print(
-                            f"      位置 {idx}: int32={inv32_flat[idx].item()}, int64={inv64_flat[idx].item()}"
-                        )
+                        int32_val = inv32_flat[idx].item()
+                        int64_val = inv64_flat[idx].item()
+                        print(f"      位置 {idx}: int32={int32_val}, int64={int64_val}")
 
     # 比较 counts
     cnt32 = results["int32"]["counts"]
@@ -191,10 +189,11 @@ def analyze_differences(results, in0, verbose=True):
     cnt_pt = results["pytorch"]["counts"]
 
     if cnt32 is not None and cnt_pt is not None:
-        print(f"  counts 范围:")
-        print(
-            f"    int32: [{cnt32.min().item()}, {cnt32.max().item()}], sum={cnt32.sum().item()}"
-        )
+        print("  counts 范围:")
+        cnt32_min = cnt32.min().item()
+        cnt32_max = cnt32.max().item()
+        cnt32_sum = cnt32.sum().item()
+        print(f"    int32: [{cnt32_min}, {cnt32_max}], sum={cnt32_sum}")
         if cnt64 is not None:
             print(
                 f"    int64: [{cnt64.min().item()}, {cnt64.max().item()}], sum={cnt64.sum().item()}"
@@ -219,7 +218,7 @@ def analyze_differences(results, in0, verbose=True):
 
     # 验证重建
     if inv32 is not None and inv_pt is not None:
-        print(f"\n  验证重建 (out[inverse] == input):")
+        print("\n  验证重建 (out[inverse] == input):")
 
         inv32_flat = inv32.ravel()
         inv64_flat = inv64.ravel() if inv64 is not None else None
@@ -304,10 +303,11 @@ def run_tests(device="cuda"):
                     print(f"    - {issue}")
                 all_issues.extend([(name, issue) for issue in issues])
             else:
-                print(f"\n  ✅ 测试通过")
+                print("\n  ✅ 测试通过")
 
         except Exception as e:
-            print(f"\n  ⚠️ 测试出错: {e}")
+            error_msg = str(e)
+            print(f"\n  ⚠️ 测试出错: {error_msg}")
             import traceback
 
             traceback.print_exc()
@@ -344,11 +344,11 @@ def quick_test(size=100000, num_unique=10000, device="cuda"):
     issues = analyze_differences(results, data, verbose=True)
 
     if issues:
-        print(f"\n❌ 发现问题:")
+        print("\n❌ 发现问题:")
         for issue in issues:
             print(f"  - {issue}")
     else:
-        print(f"\n✅ 测试通过")
+        print("\n✅ 测试通过")
 
 
 if __name__ == "__main__":

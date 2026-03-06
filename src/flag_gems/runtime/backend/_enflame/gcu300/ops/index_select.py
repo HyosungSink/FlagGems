@@ -4,9 +4,7 @@ import torch
 import triton
 import triton.language as tl
 
-from flag_gems import runtime
 from flag_gems.utils import dim_compress, libentry
-from flag_gems.utils import triton_lang_extension as tle
 
 from ..utils.config_utils import MAX_GRID_DIM
 
