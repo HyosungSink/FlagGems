@@ -122,12 +122,17 @@ def get_higher_dtype(a, b):
 
 
 def mm(a, b):
+    print(f"a.shape: {a.shape}, a.stride: {a.stride()}, b.shape: {b.shape}, b.stride: {b.stride()}")
     logger.debug("GEMS_TSINGMICRO MM")
     device = a.device
     # handle non-contiguous inputs if necessary
     if a.stride(0) > 1 and a.stride(1) > 1:
         a = a.contiguous()
     if b.stride(0) > 1 and b.stride(1) > 1:
+        b = b.contiguous()
+    if not a.is_contiguous():
+        a = a.contiguous()
+    if not b.is_contiguous():
         b = b.contiguous()
     # checks constraints
     assert a.shape[1] == b.shape[0], "incompatible dimensions"
@@ -169,11 +174,16 @@ def mm(a, b):
 
 
 def mm_out(a, b, *, out):
+    print(f"a.shape: {a.shape}, a.stride: {a.stride()}, b.shape: {b.shape}, b.stride: {b.stride()}")
     logger.debug("GEMS_TSINGMICRO MM_OUT")
     # handle non-contiguous inputs if necessary
     if a.stride(0) > 1 and a.stride(1) > 1:
         a = a.contiguous()
     if b.stride(0) > 1 and b.stride(1) > 1:
+        b = b.contiguous()
+    if not a.is_contiguous():
+        a = a.contiguous()
+    if not b.is_contiguous():
         b = b.contiguous()
     # checks constraints
     assert a.shape[1] == b.shape[0], "incompatible dimensions"
