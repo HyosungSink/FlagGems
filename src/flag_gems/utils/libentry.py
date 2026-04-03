@@ -30,7 +30,7 @@ import triton
 
 from flag_gems import runtime
 from flag_gems.runtime import torch_device_fn
-from flag_gems.runtime.backend import vendor_module
+from flag_gems.runtime.backend import _state
 from flag_gems.utils.code_cache import config_cache_dir
 from flag_gems.utils.models import PersistantModel, SQLPersistantModel
 
@@ -161,11 +161,11 @@ class LibCache(object):
             try:
                 device_name: str = torch_device_fn.get_device_name().replace(" ", "_")
             except AttributeError:
-                device_name: str = vendor_module.vendor_info.device_name
+                device_name: str = _state.vendor_module.vendor_info.device_name
             cache_file_name: str = (
                 f"TunedConfig_{device_name}_triton_{major_version}_{minor_version}.db"
-                if vendor_module.vendor_info.vendor_name == "nvidia"
-                else f"TunedConfig_{vendor_module.vendor_info.vendor_name}_triton_{major_version}_{minor_version}.db"
+                if _state.vendor_module.vendor_info.vendor_name == "nvidia"
+                else f"TunedConfig_{_state.vendor_module.vendor_info.vendor_name}_triton_{major_version}_{minor_version}.db"
             )
             cache_path: Path = config_cache_dir() / cache_file_name
             self.db_url: str = f"sqlite:///{cache_path}"
