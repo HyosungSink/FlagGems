@@ -241,6 +241,8 @@ _FULL_CONFIG = (
     ("isnan", isnan),
     ("isneginf", isneginf),
     ("isneginf.out", isneginf_out),
+    ("signbit", signbit),
+    ("signbit.out", signbit_out),
     ("kron", kron),
     ("le.Scalar", le_scalar),
     ("le.Tensor", le),
