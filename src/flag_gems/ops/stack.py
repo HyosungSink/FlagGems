@@ -126,7 +126,7 @@ def stack(
         dim_size_out = len(tensors)
 
         grid_y = num_tensors_in_batch
-        max_elements_in_batch = max(total_elements_list) if total_elements_list else 0
+        max_elements_in_batch = tensors[0].numel() if total_elements_list else 0
         grid = (triton.cdiv(max_elements_in_batch, BLOCK), grid_y)
 
         (
