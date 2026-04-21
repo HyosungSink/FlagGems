@@ -6,9 +6,9 @@ import torch
 
 # Import your operator
 from flag_gems.fused.DSA.bin_topk import (
-    HAS_TLE,
     bucket_sort_topk,  # Replace with actual module name
 )
+from flag_gems.fused.DSA.bin_topk import HAS_TLE
 
 
 def assert_set_similar(actual, expected, dtype, equal_nan=False):
@@ -145,9 +145,7 @@ def debug_topk_results(actual, expected, inputs, test_name=""):
         ([7, 31, 63], [700, 900, 1024]),
     ],
 )
-def test_bucket_sort_topk_public_entrypoint_matches_torch_topk(
-    starts_list, ends_list
-):
+def test_bucket_sort_topk_public_entrypoint_matches_torch_topk(starts_list, ends_list):
     batch_size = len(starts_list)
     seq_len = 1024
     topk = 32
