@@ -2781,6 +2781,27 @@ def test_roll_empty_input(shape, dtype):
 
 
 @pytest.mark.roll
+@pytest.mark.parametrize(
+    "shape, shifts, dims",
+    [
+        ((0,), 1, 5),
+        ((0,), 1, -5),
+        ((2, 0, 3), 1, 5),
+        ((2, 0, 3), (1, 2), (5, 9)),
+    ],
+)
+def test_roll_empty_input_with_out_of_range_dims(shape, shifts, dims):
+    inp = torch.empty(shape, dtype=torch.float32, device=flag_gems.device)
+    ref_inp = to_reference(inp, False)
+
+    ref_out = torch.roll(ref_inp, shifts, dims)
+    with flag_gems.use_gems():
+        res_out = torch.roll(inp, shifts, dims)
+
+    gems_assert_equal(res_out, ref_out)
+
+
+@pytest.mark.roll
 def test_roll_scalar_flatten():
     inp = torch.tensor(7.0, dtype=torch.float32, device=flag_gems.device)
     ref_inp = to_reference(inp, False)

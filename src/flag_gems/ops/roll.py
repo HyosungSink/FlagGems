@@ -30,7 +30,11 @@ def roll(inp: torch.Tensor, shifts, dims=None) -> torch.Tensor:
                 return _candidate_triton_single_dim(
                     inp,
                     _as_tuple(shifts)[0],
-                    _canonicalize_dim(dim_values[0], inp.dim()),
+                    _canonicalize_dim(
+                        dim_values[0],
+                        inp.dim(),
+                        allow_empty_wrap=inp.numel() == 0,
+                    ),
                 )
         return _candidate_triton(inp, shifts, dims)
     return _candidate_fallback(inp, shifts, dims)
@@ -145,7 +149,11 @@ def _candidate_fallback(
 
     result = inp
     for shift, dim in zip(shift_values, _as_tuple(dims)):
-        result = _roll_along_dim(result, shift, _canonicalize_dim(dim, inp.dim()))
+        result = _roll_along_dim(
+            result,
+            shift,
+            _canonicalize_dim(dim, inp.dim(), allow_empty_wrap=inp.numel() == 0),
+        )
     return result
 
 
@@ -189,9 +197,11 @@ def _roll_along_dim(inp: torch.Tensor, shift: int, dim: int) -> torch.Tensor:
     )
 
 
-def _canonicalize_dim(dim: int, ndim: int) -> int:
+def _canonicalize_dim(dim: int, ndim: int, allow_empty_wrap: bool = False) -> int:
     if ndim == 0:
         raise IndexError(f"Dimension specified as {dim} but tensor has no dimensions")
+    if allow_empty_wrap:
+        return dim % ndim
     if dim < -ndim or dim >= ndim:
         raise IndexError(
             f"Dimension out of range (expected to be in range of [{-ndim}, {ndim - 1}], but got {dim})"
