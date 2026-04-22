@@ -23,7 +23,10 @@ def flip_input_fn(shape, cur_dtype, device):
 
 def roll_input_fn(shape, cur_dtype, device):
     inp = generate_tensor_input(shape, cur_dtype, device)
+    yield inp, {"shifts": 257}
     if len(shape) > 1:
+        yield inp, {"shifts": 7, "dims": 0}
+        yield inp, {"shifts": 13, "dims": len(shape) - 1}
         yield inp, {"shifts": (1, 2), "dims": (0, 1)}
     else:
         yield inp, {"shifts": 1, "dims": 0}
