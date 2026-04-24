@@ -4,9 +4,7 @@ import os
 from datetime import datetime
 
 import pytest
-
-# TODO(Qiming): Try remove this line
-import torch  # noqa: F401
+import torch
 import yaml
 
 import flag_gems
@@ -33,6 +31,13 @@ device = flag_gems.device
 
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 REPORT_FILE = f"report_{TIMESTAMP}.json"
+TEST_MODE_OPTION = (
+    "--fg-test-mode"
+    if not (flag_gems.vendor_name == "kunlunxin" and torch.__version__ < "2.5")
+    else "--fg_test_mode"
+)
+TEST_RECORD_OPTION = "--fg-test-record"
+TEST_COLLECT_MARKS_OPTION = "--fg-test-collect-marks"
 
 
 def pytest_addoption(parser):
@@ -46,13 +51,16 @@ def pytest_addoption(parser):
     )
 
     parser.addoption(
-        "--quick",
-        action="store_true",
-        help="run tests on quick mode",
+        TEST_MODE_OPTION,
+        action="store",
+        default="normal",
+        required=False,
+        choices=["normal", "quick"],
+        help="run tests on normal or quick mode",
     )
 
     parser.addoption(
-        "--record",
+        TEST_RECORD_OPTION,
         action="store",
         default="none",
         required=False,
@@ -61,7 +69,7 @@ def pytest_addoption(parser):
     )
 
     parser.addoption(
-        "--collect-marks",
+        TEST_COLLECT_MARKS_OPTION,
         action="store_true",
         help="Collect the tests with marker information without executing them",
     )
@@ -78,9 +86,9 @@ def pytest_configure(config):
         marker.split(":")[0].strip() for marker in config.getini("markers")
     }
 
-    RECORD_LOG = config.getoption("--record") == "log"
+    RECORD_LOG = config.getoption(TEST_RECORD_OPTION) == "log"
     TO_CPU = config.getoption("--ref") == "cpu"
-    QUICK_MODE = config.getoption("--quick") is True
+    QUICK_MODE = config.getoption(TEST_MODE_OPTION) == "quick"
 
     if RECORD_LOG:
         RUNTEST_INFO = {}
@@ -135,7 +143,7 @@ def pytest_runtest_protocol(item, nextitem):
     TEST_RESULTS[item.nodeid]["params"] = param_values
     # get all mark
     all_marks = [mark.name for mark in item.iter_markers()]
-    # exclude marks，such as parametrize、skipif and so on
+    # exclude marks锛宻uch as parametrize銆乻kipif and so on
     operator_marks = [mark for mark in all_marks if mark not in BUILTIN_MARKS]
     TEST_RESULTS[item.nodeid]["opname"] = operator_marks
 
@@ -178,7 +186,7 @@ def pytest_terminal_summary(terminalreporter):
 
 
 def pytest_collection_modifyitems(session, config, items):
-    if config.getoption("--collect-marks"):
+    if config.getoption(TEST_COLLECT_MARKS_OPTION):
         report = []
         for item in items:
             data = {}
