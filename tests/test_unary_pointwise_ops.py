@@ -2385,7 +2385,7 @@ def test_apply_repetition_penalty(shape, penalty, dtype, mask_mode):
     if should_modify:
         assert not torch.equal(
             to_reference(logits, True), to_reference(logits_ori, True)
-        ), "In-place未生效"
+        ), "In-place鏈敓鏁?
     elif mask_mode == "empty":
         gems_assert_close(res, to_reference(logits_ori, True).to(dtype), dtype)
 
@@ -2485,7 +2485,7 @@ def test_round_out(shape, dtype):
 def test_round_decimals(shape, dtype, decimals):
     inp = torch.randn(shape, dtype=dtype, device=flag_gems.device) * 100
 
-    # When demical≠0 and input is float16/bfloat16,
+    # When demical鈮? and input is float16/bfloat16,
     # compute result is difference between CUDA and CPU in Pytorch itself because of precision error
     # so compare the result between FlagGems version and Pytorch CUDA version
     ref_out = torch.round(inp, decimals=decimals)

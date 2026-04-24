@@ -31,11 +31,7 @@ device = flag_gems.device
 
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 REPORT_FILE = f"report_{TIMESTAMP}.json"
-TEST_MODE_OPTION = (
-    "--fg-test-mode"
-    if not (flag_gems.vendor_name == "kunlunxin" and torch.__version__ < "2.5")
-    else "--fg_test_mode"
-)
+TEST_QUICK_OPTION = "--fg-test-quick"
 TEST_RECORD_OPTION = "--fg-test-record"
 TEST_COLLECT_MARKS_OPTION = "--fg-test-collect-marks"
 
@@ -51,12 +47,9 @@ def pytest_addoption(parser):
     )
 
     parser.addoption(
-        TEST_MODE_OPTION,
-        action="store",
-        default="normal",
-        required=False,
-        choices=["normal", "quick"],
-        help="run tests on normal or quick mode",
+        TEST_QUICK_OPTION,
+        action="store_true",
+        help="run tests on quick mode",
     )
 
     parser.addoption(
@@ -88,7 +81,7 @@ def pytest_configure(config):
 
     RECORD_LOG = config.getoption(TEST_RECORD_OPTION) == "log"
     TO_CPU = config.getoption("--ref") == "cpu"
-    QUICK_MODE = config.getoption(TEST_MODE_OPTION) == "quick"
+    QUICK_MODE = config.getoption(TEST_QUICK_OPTION) is True
 
     if RECORD_LOG:
         RUNTEST_INFO = {}
