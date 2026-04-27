@@ -1820,6 +1820,7 @@ def test_accuracy_leaky_relu_out(shape, dtype, negative_slope):
 
     gems_assert_close(out, ref_out, dtype)
 
+
 ROLL_SHIFTS_DIMS = [
     (1, 0),
     (-1, 0),

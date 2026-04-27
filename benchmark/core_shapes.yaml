@@ -71,15 +71,6 @@ gcd:
     - [64, 256, 256]
   shape_desc: "(B), M, N"
 
-roll:
-  shapes:
-    - [1024]
-    - [256, 256]
-    - [32, 64, 64]
-    - [64, 128, 128]
-    - [8, 16, 128, 128]
-  shape_desc: "layout roll representative shapes"
-
 softmax_backward:
   shapes:
     - [1048576] # 1024 * 1024
