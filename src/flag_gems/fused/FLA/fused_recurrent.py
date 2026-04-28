@@ -516,11 +516,7 @@ def fused_recurrent_gated_delta_rule_fwd(
     assert NK == 1, "NK > 1 is not supported yet"
     num_stages = 3
     num_warps = 1
-    qkv_contiguous = (
-        (q.stride(0) == q.stride(1) + q.stride(2))
-        and (k.stride(0) == k.stride(1) + k.stride(2))
-        and (v.stride(0) == v.stride(1) + v.stride(2))
-    )
+    qkv_contiguous = q.is_contiguous() and k.is_contiguous() and v.is_contiguous()
 
     o = q.new_empty(NK, *v.shape)
     if inplace_final_state:
@@ -590,7 +586,7 @@ def fused_recurrent_gated_delta_rule_fwd(
             g.shape,
             beta.shape,
             initial_state.shape,
-            cu_seqlens.shape,
+            None if cu_seqlens is None else cu_seqlens.shape,
             N,
             T,
             B,

@@ -1,4 +1,5 @@
 import random
+import os
 from typing import Dict, List
 
 import pytest
@@ -7,13 +8,17 @@ import torch.nn.functional as F
 
 import flag_gems
 
-try:
-    from vllm.model_executor.layers.fla.ops import (
-        fused_recurrent_gated_delta_rule as base_fused_recurrent_gated_delta_rule,
-    )
+if os.getenv("FLAGGEMS_ENABLE_VLLM_REFERENCE", "0") == "1":
+    try:
+        from vllm.model_executor.layers.fla.ops import (
+            fused_recurrent_gated_delta_rule as base_fused_recurrent_gated_delta_rule,
+        )
 
-    VLLM_AVAILABLE = True
-except ImportError:  # pragma: no cover - optional dependency guard
+        VLLM_AVAILABLE = True
+    except Exception:  # pragma: no cover - optional dependency guard
+        base_fused_recurrent_gated_delta_rule = None
+        VLLM_AVAILABLE = False
+else:
     base_fused_recurrent_gated_delta_rule = None
     VLLM_AVAILABLE = False
 
