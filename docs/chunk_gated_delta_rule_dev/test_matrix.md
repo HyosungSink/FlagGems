@@ -20,6 +20,7 @@ or `tests/test_FLA/test_chunk_gated_delta_rule.py`.
 - `torch.float16`
 - `torch.bfloat16`
 - `torch.float32` reference-only sanity check if useful
+- `g=torch.float32` with `q/k/v` in `torch.float16` or `torch.bfloat16`
 
 ## Feature Coverage
 
@@ -32,6 +33,10 @@ or `tests/test_FLA/test_chunk_gated_delta_rule.py`.
 - Final state returned or updated if supported.
 - `cu_seqlens is None`.
 - Explicit `cu_seqlens` for variable-length token streams if supported.
+- `cu_seqlens` in both `torch.int32` and `torch.int64`.
+- Cross-chunk sequence lengths such as `T=65` and `T=129`.
+- Scalar beta returns a real `[B, T, HV, 64]` `A` workspace.
+- Value-dependent beta returns `A is None` rather than a fake workspace.
 
 ## Numerical Checks
 

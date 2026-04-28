@@ -16,6 +16,7 @@ from flag_gems.fused.FLA.utils import SUPPRESS_LEVEL
 logger = logging.getLogger(__name__)
 
 _SUPPORTED_DTYPES = (torch.float16, torch.bfloat16, torch.float32)
+_SUPPORTED_CU_SEQLENS_DTYPES = (torch.int32, torch.int64)
 _CHUNK_SIZE = 64
 
 
@@ -60,8 +61,10 @@ def _validate_inputs(
         raise ValueError("chunk_gated_delta_rule_fwd currently supports K <= 128.")
     if q.dtype not in _SUPPORTED_DTYPES or k.dtype != q.dtype or v.dtype != q.dtype:
         raise TypeError("q, k, and v must share dtype float16, bfloat16, or float32.")
-    if g.dtype != q.dtype or beta.dtype != q.dtype:
-        raise TypeError("g and beta must use the same dtype as q, k, and v.")
+    if g.dtype not in _SUPPORTED_DTYPES:
+        raise TypeError("g must have dtype float16, bfloat16, or float32.")
+    if beta.dtype != q.dtype:
+        raise TypeError("beta must use the same dtype as q, k, and v.")
     devices = {q.device, k.device, v.device, g.device, beta.device}
     if len(devices) != 1:
         raise ValueError("q, k, v, g, and beta must be on the same device.")
@@ -71,20 +74,15 @@ def _validate_inputs(
     if cu_seqlens is not None:
         if cu_seqlens.ndim != 1:
             raise ValueError("cu_seqlens must be a rank-1 tensor.")
-        if cu_seqlens.dtype != torch.long:
-            raise TypeError("cu_seqlens must have dtype torch.long.")
+        if cu_seqlens.dtype not in _SUPPORTED_CU_SEQLENS_DTYPES:
+            raise TypeError("cu_seqlens must have dtype torch.int32 or torch.int64.")
         if cu_seqlens.device != q.device:
             raise ValueError("cu_seqlens must be on the same device as q.")
         if B != 1:
             raise ValueError("B must be 1 when cu_seqlens is provided.")
-        cu_cpu = cu_seqlens.detach().cpu()
-        if cu_cpu.numel() < 2:
+        if cu_seqlens.numel() < 2:
             raise ValueError("cu_seqlens must contain at least a start and an end offset.")
-        if int(cu_cpu[0]) != 0 or int(cu_cpu[-1]) != T:
-            raise ValueError("cu_seqlens must start at 0 and end at q.shape[1].")
-        if torch.any(cu_cpu[1:] < cu_cpu[:-1]):
-            raise ValueError("cu_seqlens must be non-decreasing.")
-        N = cu_cpu.numel() - 1
+        N = cu_seqlens.numel() - 1
     else:
         N = B
 
@@ -102,15 +100,21 @@ def _validate_inputs(
     return B, T, H, HV, K, V, N
 
 
-def _lengths_from_cu_seqlens(
+def _cu_seqlens_to_list(
     T: int,
     B: int,
     cu_seqlens: torch.Tensor | None,
 ) -> list[int]:
     if cu_seqlens is None:
-        return [T] * B
+        return [i * T for i in range(B + 1)]
+    # A single host sync is kept here because the Python wrapper constructs
+    # per-sequence state indices and the torch A workspace by segment.
     cu_cpu = cu_seqlens.detach().cpu().tolist()
-    return [int(e) - int(s) for s, e in zip(cu_cpu[:-1], cu_cpu[1:])]
+    if cu_cpu[0] != 0 or cu_cpu[-1] != T:
+        raise ValueError("cu_seqlens must start at 0 and end at q.shape[1].")
+    if any(e < s for s, e in zip(cu_cpu[:-1], cu_cpu[1:])):
+        raise ValueError("cu_seqlens must be non-decreasing.")
+    return [int(x) for x in cu_cpu]
 
 
 def _build_cu_seqlens(
@@ -124,7 +128,8 @@ def _build_cu_seqlens(
     return torch.arange(0, (B + 1) * T, T, device=device, dtype=torch.long)
 
 
-def _build_state_indices(lengths: list[int], device: torch.device) -> torch.Tensor:
+def _build_state_indices(offsets: list[int], device: torch.device) -> torch.Tensor:
+    lengths = [end - start for start, end in zip(offsets[:-1], offsets[1:])]
     max_len = max(lengths)
     indices = torch.empty((len(lengths), max_len), device=device, dtype=torch.long)
     for i, length in enumerate(lengths):
@@ -167,37 +172,93 @@ def _prepare_recurrent_inputs(
 
 def _chunk_local_cumsum(
     g: torch.Tensor,
-    cu_seqlens: torch.Tensor | None,
+    offsets: list[int],
     chunk_size: int = _CHUNK_SIZE,
 ) -> torch.Tensor:
     g_out = torch.empty_like(g)
-    if cu_seqlens is None:
+    if g.shape[0] > 1:
         for start in range(0, g.shape[1], chunk_size):
             end = min(start + chunk_size, g.shape[1])
             g_out[:, start:end, :] = torch.cumsum(g[:, start:end, :], dim=1)
         return g_out
 
-    cu_cpu = cu_seqlens.detach().cpu().tolist()
-    for seq_start, seq_end in zip(cu_cpu[:-1], cu_cpu[1:]):
-        seq_start = int(seq_start)
-        seq_end = int(seq_end)
+    for seq_start, seq_end in zip(offsets[:-1], offsets[1:]):
         for start in range(seq_start, seq_end, chunk_size):
             end = min(start + chunk_size, seq_end)
             g_out[:, start:end, :] = torch.cumsum(g[:, start:end, :], dim=1)
     return g_out
 
 
-def _forward_only_a_placeholder(k: torch.Tensor, beta: torch.Tensor) -> torch.Tensor:
-    """Return a shape-compatible A slot for the forward-only public ABI.
+def _solve_lower_unit_inverse(base: torch.Tensor) -> torch.Tensor:
+    attn = -torch.tril(base, diagonal=-1)
+    size = attn.shape[-1]
+    for i in range(1, size):
+        row = attn[..., i, :i].clone()
+        attn[..., i, :i] = row + (row[..., :, None] * attn[..., :i, :i]).sum(dim=-2)
+    attn = attn + torch.eye(size, device=base.device, dtype=torch.float32)
+    return attn
 
-    The competition operator registered in ``conf/operators.yaml`` is the fwd
-    case.  This recurrent implementation does not materialize FLA's intra-chunk
-    solve-triangular workspace, so callers must not use this tensor for
-    backward or recomputation.
-    """
-    B, T = k.shape[:2]
-    H = beta.shape[2]
-    return torch.zeros((B, T, H, _CHUNK_SIZE), device=k.device, dtype=k.dtype)
+
+def _repeat_k_heads(k: torch.Tensor, HV: int) -> torch.Tensor:
+    return k.repeat_interleave(HV // k.shape[2], dim=2)
+
+
+def _compute_scalar_beta_a_chunk(
+    k_hv: torch.Tensor,
+    g_cumsum: torch.Tensor,
+    beta: torch.Tensor,
+) -> torch.Tensor:
+    k_hv = k_hv.float().permute(0, 2, 1, 3)
+    beta = beta.float().permute(0, 2, 1)
+    g_cumsum = g_cumsum.float().permute(0, 2, 1)
+    k_beta = k_hv * beta[..., None]
+    kkt = k_beta @ k_hv.transpose(-1, -2)
+    decay = torch.exp(g_cumsum[..., :, None] - g_cumsum[..., None, :])
+    return _solve_lower_unit_inverse(kkt * decay)
+
+
+def _compute_scalar_beta_a(
+    k: torch.Tensor,
+    g_cumsum: torch.Tensor,
+    beta: torch.Tensor,
+    offsets: list[int],
+    chunk_size: int = _CHUNK_SIZE,
+) -> torch.Tensor | None:
+    if beta.ndim == 4:
+        return None
+
+    B, T, _H, _K = k.shape
+    HV = beta.shape[2]
+    k_hv = _repeat_k_heads(k, HV)
+    A = torch.zeros((B, T, HV, chunk_size), device=k.device, dtype=k.dtype)
+
+    if B > 1:
+        for chunk_start in range(0, T, chunk_size):
+            chunk_end = min(chunk_start + chunk_size, T)
+            length = chunk_end - chunk_start
+            solved = _compute_scalar_beta_a_chunk(
+                k_hv[:, chunk_start:chunk_end],
+                g_cumsum[:, chunk_start:chunk_end],
+                beta[:, chunk_start:chunk_end],
+            )
+            A[:, chunk_start:chunk_end, :, :length] = solved.permute(0, 2, 1, 3).to(
+                k.dtype
+            )
+        return A
+
+    for seq_start, seq_end in zip(offsets[:-1], offsets[1:]):
+        for chunk_start in range(seq_start, seq_end, chunk_size):
+            chunk_end = min(chunk_start + chunk_size, seq_end)
+            length = chunk_end - chunk_start
+            solved = _compute_scalar_beta_a_chunk(
+                k_hv[:, chunk_start:chunk_end],
+                g_cumsum[:, chunk_start:chunk_end],
+                beta[:, chunk_start:chunk_end],
+            )
+            A[:, chunk_start:chunk_end, :, :length] = solved.permute(0, 2, 1, 3).to(
+                k.dtype
+            )
+    return A
 
 
 def chunk_gated_delta_rule_fwd(
@@ -209,17 +270,24 @@ def chunk_gated_delta_rule_fwd(
     scale: float,
     initial_state: torch.Tensor | None,
     output_final_state: bool,
-    cu_seqlens: torch.LongTensor | None = None,
+    cu_seqlens: torch.Tensor | None = None,
 ):
     """Forward-only chunk gated delta rule.
 
     Returns the FLA-compatible tuple ``(g, o, A, final_state, ..., ..., ...)``.
-    ``A`` is a shape-compatible placeholder because backward is intentionally
-    outside the scope of ``chunk_gated_delta_rule_fwd``.
+    ``A`` is the solved intra-chunk workspace for scalar beta. For V-dependent
+    beta, FLA's ``[B, T, HV, 64]`` workspace cannot represent the per-value
+    recurrence, so ``A`` is returned as ``None`` instead of a misleading tensor.
     """
     logger.debug("GEMS CHUNK GATED DELTA RULE FWD")
     B, T, _H, HV, K, V, N = _validate_inputs(q, k, v, g, beta, initial_state, cu_seqlens)
-    lengths = _lengths_from_cu_seqlens(T, B, cu_seqlens)
+    if SUPPRESS_LEVEL >= 3:
+        raise RuntimeError(
+            "SUPPRESS_LEVEL >= 3 requests w/h/v_new debug tensors, which are not "
+            "materialized by the recurrent chunk_gated_delta_rule_fwd path."
+        )
+    offsets = _cu_seqlens_to_list(T, B, cu_seqlens)
+    lengths = [end - start for start, end in zip(offsets[:-1], offsets[1:])]
     if any(length == 0 for length in lengths):
         raise ValueError("zero-length sequences in cu_seqlens are not supported.")
 
@@ -227,7 +295,7 @@ def chunk_gated_delta_rule_fwd(
         q, k, v, g, beta, cu_seqlens
     )
     cu_work = _build_cu_seqlens(B, T, cu_seqlens, q.device)
-    state_indices = _build_state_indices(lengths, q.device)
+    state_indices = _build_state_indices(offsets, q.device)
 
     if initial_state is None:
         recurrent_initial = torch.zeros(
@@ -256,10 +324,8 @@ def chunk_gated_delta_rule_fwd(
     else:
         o = o_work
 
-    g_out = _chunk_local_cumsum(g.contiguous(), cu_seqlens)
-    A = _forward_only_a_placeholder(k, beta)
+    g_out = _chunk_local_cumsum(g.contiguous(), offsets)
+    A = _compute_scalar_beta_a(k.contiguous(), g_out, beta.contiguous(), offsets)
     final_state = recurrent_final if output_final_state else None
 
-    if SUPPRESS_LEVEL < 3:
-        return g_out, o, A, final_state, None, None, None
     return g_out, o, A, final_state, None, None, None

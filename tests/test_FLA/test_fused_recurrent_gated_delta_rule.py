@@ -8,6 +8,9 @@ import torch.nn.functional as F
 
 import flag_gems
 
+# Importing vLLM after FlagGems can abort the CoreX process via ixformer duplicate
+# native op registration. Keep the external reference opt-in; the torch fallback
+# test below still exercises this file by default.
 if os.getenv("FLAGGEMS_ENABLE_VLLM_REFERENCE", "0") == "1":
     try:
         from vllm.model_executor.layers.fla.ops import (
@@ -31,6 +34,29 @@ def is_cuda_available() -> bool:
 
 
 CUDA_AVAILABLE = is_cuda_available()
+
+
+def _repeat_qk_heads(x: torch.Tensor, HV: int) -> torch.Tensor:
+    return x.float().repeat_interleave(HV // x.shape[-2], dim=-2)
+
+
+def _torch_recurrent_reference(q, k, v, g, beta, scale, initial_state):
+    B, T, _, _ = q.shape
+    HV = v.shape[2]
+    q_hv = _repeat_qk_heads(q, HV)
+    k_hv = _repeat_qk_heads(k, HV)
+    state = initial_state.float().clone()
+    out = torch.empty_like(v, dtype=torch.float32)
+    for t in range(T):
+        state = state * g[:, t].float().exp()[..., None, None]
+        delta = v[:, t].float() - torch.einsum("bhkv,bhk->bhv", state, k_hv[:, t])
+        if beta.ndim == 3:
+            delta = delta * beta[:, t].float()[..., None]
+        else:
+            delta = delta * beta[:, t].float()
+        state = state + k_hv[:, t][..., None] * delta[..., None, :]
+        out[:, t] = torch.einsum("bhk,bhkv->bhv", q_hv[:, t] * scale, state)
+    return out.to(v.dtype), state
 
 
 def rearrange_mixed_qkv(
@@ -155,6 +181,50 @@ class FusedRecurrentGatedDeltaRuleTestKit:
             "use_qk_l2norm_in_kernel": cfg["use_qk_l2norm"],
             "ssm_state_indices": ssm_state_indices,
         }
+
+
+@pytest.mark.skipif(not CUDA_AVAILABLE, reason="requires CUDA device")
+@pytest.mark.fused_recurrent_gated_delta_rule
+@pytest.mark.parametrize("beta_has_dim_v", [False, True])
+def test_fused_recurrent_gated_delta_rule_matches_torch_reference(beta_has_dim_v):
+    torch.manual_seed(20260428 + int(beta_has_dim_v))
+    B, T, H, HV, K, V = 1, 8, 2, 4, 16, 16
+    dtype = torch.float16
+    q = torch.randn((B, T, H, K), device=flag_gems.device, dtype=dtype) * (K**-0.5)
+    k = torch.randn((B, T, H, K), device=flag_gems.device, dtype=dtype) * (K**-0.5)
+    v = torch.randn((B, T, HV, V), device=flag_gems.device, dtype=dtype) * 0.5
+    g = F.logsigmoid(torch.randn((B, T, HV), device=flag_gems.device, dtype=dtype))
+    if beta_has_dim_v:
+        beta = torch.rand((B, T, HV, V), device=flag_gems.device, dtype=dtype).sigmoid()
+    else:
+        beta = torch.rand((B, T, HV), device=flag_gems.device, dtype=dtype).sigmoid()
+    initial_state = torch.zeros((B, HV, K, V), device=flag_gems.device, dtype=torch.float32)
+    flag_initial = initial_state.clone()
+    ref_initial = initial_state.clone()
+    scale = K**-0.5
+    cu_seqlens = torch.tensor([0, T], device=flag_gems.device, dtype=torch.long)
+    ssm_state_indices = torch.zeros(T, device=flag_gems.device, dtype=torch.long)
+
+    flag_out, flag_final = flag_gems.fused_recurrent_gated_delta_rule_fwd(
+        q=q,
+        k=k,
+        v=v,
+        g=g,
+        beta=beta,
+        scale=scale,
+        initial_state=flag_initial,
+        inplace_final_state=True,
+        cu_seqlens=cu_seqlens,
+        ssm_state_indices=ssm_state_indices,
+        num_accepted_tokens=None,
+        use_qk_l2norm_in_kernel=False,
+    )
+    ref_out, ref_final = _torch_recurrent_reference(
+        q, k, v, g, beta, scale, ref_initial
+    )
+
+    torch.testing.assert_close(flag_out, ref_out, rtol=2e-2, atol=3e-2)
+    torch.testing.assert_close(flag_final, ref_final, rtol=3e-2, atol=5e-2)
 
 
 @pytest.mark.skipif(

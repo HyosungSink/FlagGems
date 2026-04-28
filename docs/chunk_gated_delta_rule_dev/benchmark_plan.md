@@ -14,7 +14,9 @@ Preferred baselines:
 - Megatron Core torch-native `torch_chunk_gated_delta_rule`, if available.
 
 If the external reference is unavailable in CI, keep benchmark imports guarded
-and fall back cleanly.
+and fall back to an explicitly named Megatron/FLA torch chunk-formula reference.
+Do not report speedup against a per-token Python recurrence as the competition
+performance baseline.
 
 ## Shapes
 
