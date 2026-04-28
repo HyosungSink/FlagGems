@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
+PYTHON_BIN="${PYTHON:-python3}"
 
 BENCH_FILE="${CTC_BENCH_FILE:-benchmark/test_ctc_loss.py}"
 WARMUP="${CTC_WARMUP:-20}"
@@ -32,5 +33,4 @@ if [[ -n "${DTYPES}" ]]; then
   args+=(--dtypes "${DTYPES}")
 fi
 
-python -m pytest "${args[@]}" "$@"
-
+"${PYTHON_BIN}" -m pytest "${args[@]}" "$@"

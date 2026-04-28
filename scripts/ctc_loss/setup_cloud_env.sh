@@ -3,11 +3,12 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
+PYTHON_BIN="${PYTHON:-python3}"
 
 echo "[ctc_loss] repository: ${ROOT_DIR}"
 echo "[ctc_loss] branch: $(git branch --show-current 2>/dev/null || echo unknown)"
 
-python - <<'PY'
+"${PYTHON_BIN}" - <<'PY'
 import importlib.util
 import platform
 import sys
@@ -35,10 +36,10 @@ cat <<'EOF'
 [ctc_loss] Optional install commands:
 
   # In a prepared FlagOS cloud image, you may not need this.
-  python -m pip install -e ".[test]"
+  python3 -m pip install -e ".[test]"
 
   # NVIDIA extra, only when the package index is accessible from the cloud:
-  python -m pip install -e ".[nvidia,test]"
+  python3 -m pip install -e ".[nvidia,test]"
 
 [ctc_loss] Next:
 
@@ -47,4 +48,3 @@ cat <<'EOF'
   Add tests/test_ctc_loss.py
   Add benchmark/test_ctc_loss.py
 EOF
-
