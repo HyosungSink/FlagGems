@@ -415,6 +415,168 @@ def test_ctc_loss_forward_no_grad_path(target_layout, reduction):
 
 
 @pytest.mark.ctc_loss
+def test_ctc_loss_no_grad_large_concatenated_variable_lengths_regression():
+    utils.init_seed(2026)
+    t_steps, batch, classes, max_target = (256, 16, 64, 48)
+    log_probs = _make_log_probs(
+        (t_steps, batch, classes), torch.float32
+    ).detach()
+    input_lengths = torch.tensor(
+        [t_steps - row for row in range(batch)],
+        device=flag_gems.device,
+        dtype=torch.long,
+    )
+
+    target_lengths = torch.empty(batch, device=flag_gems.device, dtype=torch.long)
+    pieces = []
+    values = _nonblank_values(classes, 0)
+    for row in range(batch):
+        length = max(1, max_target - (row % 5))
+        target_lengths[row] = length
+        pieces.append(
+            torch.tensor(
+                [values[(row + col) % len(values)] for col in range(length)],
+                device=flag_gems.device,
+                dtype=torch.long,
+            )
+        )
+    targets = torch.cat(pieces)
+
+    _, ref_out = _reference_ctc_loss(
+        log_probs,
+        targets,
+        input_lengths,
+        target_lengths,
+        0,
+        "none",
+        False,
+    )
+    res_out = flag_gems.ctc_loss(
+        log_probs,
+        targets,
+        input_lengths,
+        target_lengths,
+        reduction="none",
+    )
+
+    utils.gems_assert_close(
+        res_out,
+        ref_out,
+        torch.float32,
+        reduce_dim=t_steps * int(target_lengths.max().item() + 1),
+    )
+
+
+@pytest.mark.ctc_loss
+def test_ctc_loss_no_grad_padded_noncontiguous_blank_zero_infinity_none():
+    utils.init_seed(404)
+    t_steps, batch, classes, max_target = (13, 3, 8, 5)
+    blank = 2
+    log_probs = _make_log_probs(
+        (t_steps, batch, classes), torch.float32, noncontiguous=True
+    ).detach()
+    targets, target_lengths = _make_targets(
+        batch, max_target, classes, blank, "normal", "padded"
+    )
+    input_lengths = torch.tensor([3, 2, 1], device=flag_gems.device, dtype=torch.long)
+
+    _, ref_out = _reference_ctc_loss(
+        log_probs,
+        targets,
+        input_lengths,
+        target_lengths,
+        blank,
+        "none",
+        True,
+    )
+    res_out = flag_gems.ctc_loss(
+        log_probs,
+        targets,
+        input_lengths,
+        target_lengths,
+        blank=blank,
+        reduction="none",
+        zero_infinity=True,
+    )
+
+    utils.gems_assert_close(
+        res_out,
+        ref_out,
+        torch.float32,
+        reduce_dim=t_steps * int(target_lengths.max().item() + 1),
+    )
+
+
+@pytest.mark.ctc_loss
+@pytest.mark.parametrize(
+    ("input_lengths", "target_count"),
+    [
+        ([65, 64, 64, 64], 58),
+        ([64, 64, 64, 64], 57),
+    ],
+)
+def test_ctc_loss_invalid_small_shape_inputs_raise(input_lengths, target_count):
+    log_probs = _make_log_probs((64, 4, 32), torch.float32).detach()
+    target_lengths = torch.tensor(
+        [16, 15, 14, 13], device=flag_gems.device, dtype=torch.long
+    )
+    targets = (
+        torch.arange(target_count, device=flag_gems.device, dtype=torch.long) % 31
+    ) + 1
+    input_lengths = torch.tensor(
+        input_lengths, device=flag_gems.device, dtype=torch.long
+    )
+
+    with pytest.raises(RuntimeError):
+        flag_gems.ctc_loss(
+            log_probs,
+            targets,
+            input_lengths,
+            target_lengths,
+            reduction="mean",
+        )
+
+
+@pytest.mark.ctc_loss
+def test_ctc_loss_length_stats_cache_observes_inplace_mutation():
+    log_probs = _make_log_probs((64, 4, 32), torch.float32).detach()
+    target_lengths = torch.tensor(
+        [16, 15, 14, 13], device=flag_gems.device, dtype=torch.long
+    )
+    targets = (torch.arange(58, device=flag_gems.device, dtype=torch.long) % 31) + 1
+    input_lengths = torch.full((4,), 64, device=flag_gems.device, dtype=torch.long)
+
+    flag_gems.ctc_loss(
+        log_probs,
+        targets,
+        input_lengths,
+        target_lengths,
+        reduction="sum",
+    )
+
+    input_lengths[0] = 65
+    with pytest.raises(RuntimeError):
+        flag_gems.ctc_loss(
+            log_probs,
+            targets,
+            input_lengths,
+            target_lengths,
+            reduction="sum",
+        )
+
+    input_lengths[0] = 64
+    target_lengths[0] = 15
+    with pytest.raises(RuntimeError):
+        flag_gems.ctc_loss(
+            log_probs,
+            targets,
+            input_lengths,
+            target_lengths,
+            reduction="sum",
+        )
+
+
+@pytest.mark.ctc_loss
 def test_ctc_loss_invalid_concatenated_target_raises():
     log_probs = _make_log_probs((6, 2, 5), torch.float32)
     targets = torch.tensor([1, 2], device=flag_gems.device, dtype=torch.long)
