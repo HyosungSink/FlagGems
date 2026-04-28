@@ -245,6 +245,22 @@ def _range_block(scale: float, output_size: int) -> int:
     return max(1, min(output_size, math.ceil(scale)))
 
 
+def _can_use_x2_fast_path(
+    IH: int,
+    IW: int,
+    OH: int,
+    OW: int,
+    scales_h: Optional[float],
+    scales_w: Optional[float],
+) -> bool:
+    return (
+        OH == IH * 2
+        and OW == IW * 2
+        and (scales_h is None or scales_h == 2.0)
+        and (scales_w is None or scales_w == 2.0)
+    )
+
+
 def _identity_copy(input: torch.Tensor) -> torch.Tensor:
     output = torch.empty_strided(
         input.size(), input.stride(), dtype=input.dtype, device=input.device
@@ -295,11 +311,8 @@ def upsample_nearest2d_backward(
         return grad_input
 
     use_int32_idx = max(total_threads, grad_output.numel()) <= (2**31 - 1)
-    if (
-        _use_channels_last_output(grad_output)
-        and OH == IH * 2
-        and OW == IW * 2
-    ):
+    use_x2_fast_path = _can_use_x2_fast_path(IH, IW, OH, OW, scales_h, scales_w)
+    if _use_channels_last_output(grad_output) and use_x2_fast_path:
         def grid(meta):
             return (triton.cdiv(N * IH * IW * C, meta["BLOCK_SIZE"]),)
 
@@ -325,8 +338,7 @@ def upsample_nearest2d_backward(
     if (
         grad_output.is_contiguous()
         and grad_input.is_contiguous()
-        and OH == IH * 2
-        and OW == IW * 2
+        and use_x2_fast_path
     ):
         def grid(meta):
             return (triton.cdiv(total_threads, meta["BLOCK_SIZE"]),)

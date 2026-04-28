@@ -256,6 +256,22 @@ def _use_channels_last_output(input: torch.Tensor) -> bool:
     return input.is_contiguous(memory_format=torch.channels_last) and input.stride(1) == 1
 
 
+def _can_use_x2_fast_path(
+    IH: int,
+    IW: int,
+    OH: int,
+    OW: int,
+    scales_h: Optional[float],
+    scales_w: Optional[float],
+) -> bool:
+    return (
+        OH == IH * 2
+        and OW == IW * 2
+        and (scales_h is None or scales_h == 2.0)
+        and (scales_w is None or scales_w == 2.0)
+    )
+
+
 def _identity_copy(input: torch.Tensor) -> torch.Tensor:
     output = torch.empty_strided(
         input.size(), input.stride(), dtype=input.dtype, device=input.device
@@ -303,7 +319,8 @@ def upsample_nearest2d(
     use_int32_idx = total_threads <= (2**31 - 1)
     same_h = OH == IH
     same_w = OW == IW
-    if _use_channels_last_output(input) and OH == IH * 2 and OW == IW * 2:
+    use_x2_fast_path = _can_use_x2_fast_path(IH, IW, OH, OW, scales_h, scales_w)
+    if _use_channels_last_output(input) and use_x2_fast_path:
         def grid(meta):
             return (triton.cdiv(N * IH * IW * C, meta["BLOCK_SIZE"]),)
 
@@ -327,7 +344,7 @@ def upsample_nearest2d(
         return output
 
     if input.is_contiguous() and output.is_contiguous() and OH >= IH and OW >= IW:
-        if OH == IH * 2 and OW == IW * 2:
+        if use_x2_fast_path:
             def grid(meta):
                 return (triton.cdiv(N * C * IH * IW, meta["BLOCK_SIZE"]),)
 

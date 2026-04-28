@@ -103,6 +103,32 @@ def test_upsample_nearest2d_backward_layout(dtype, layout):
 
 @pytest.mark.upsample_nearest2d
 @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
+@pytest.mark.parametrize("layout", ["contiguous", "channels_last"])
+def test_upsample_nearest2d_backward_x2_output_size_explicit_non_x2_scales(
+    dtype, layout
+):
+    input_size = (1, 3, 4, 4)
+    output_size = (8, 8)
+    scales_h = 3.0
+    scales_w = 3.0
+    grad_output = _make_layout_grad_output(
+        (*input_size[:2], *output_size), dtype, layout
+    )
+
+    ref_grad_input = torch.ops.aten.upsample_nearest2d_backward(
+        grad_output, output_size, input_size, scales_h, scales_w
+    )
+    with flag_gems.use_gems():
+        res_grad_input = torch.ops.aten.upsample_nearest2d_backward(
+            grad_output, output_size, input_size, scales_h, scales_w
+        )
+
+    utils.gems_assert_close(res_grad_input, ref_grad_input, dtype, reduce_dim=9)
+    assert res_grad_input.stride() == ref_grad_input.stride()
+
+
+@pytest.mark.upsample_nearest2d
+@pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
 @pytest.mark.parametrize("layout", ["contiguous", "channels_last", "transpose"])
 @pytest.mark.parametrize("scales_h, scales_w", [(None, None), (1.0, 1.0), (2.0, 2.0)])
 def test_upsample_nearest2d_backward_identity_fresh_tensor_preserves_layout(
