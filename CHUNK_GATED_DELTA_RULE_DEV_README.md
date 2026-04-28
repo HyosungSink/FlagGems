@@ -16,7 +16,8 @@ chunk_gated_delta_rule_fwd(q, k, v, g, beta, ...)
 
 The task is not a standard PyTorch ATen operator. Treat the public FLA
 implementation and any torch-native reference implementation as the semantic
-source of truth, then integrate the optimized Triton path into FlagGems.
+source of truth. On CoreX/Iluvatar, document clearly whether the active path is
+the optimized Triton chunk pipeline or a recurrent-backed forward fallback.
 
 ## Start Here
 

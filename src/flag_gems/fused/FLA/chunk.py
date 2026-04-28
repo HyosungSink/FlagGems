@@ -7,17 +7,28 @@
 from __future__ import annotations
 
 import logging
+import os
 
 import torch
 
+from flag_gems import runtime
+from flag_gems.fused.FLA.chunk_delta_h import chunk_gated_delta_rule_fwd_h
+from flag_gems.fused.FLA.chunk_o import chunk_fwd_o
+from flag_gems.fused.FLA.fused_cumsum_kkt_solve_tril import (
+    chunk_gated_delta_rule_fused_cumsum_kkt_solve_tril,
+)
 from flag_gems.fused.FLA.fused_recurrent import fused_recurrent_gated_delta_rule_fwd
 from flag_gems.fused.FLA.utils import SUPPRESS_LEVEL
+from flag_gems.fused.FLA.wy_fast import recompute_w_u_fwd
 
 logger = logging.getLogger(__name__)
 
 _SUPPORTED_DTYPES = (torch.float16, torch.bfloat16, torch.float32)
 _SUPPORTED_CU_SEQLENS_DTYPES = (torch.int32, torch.int64)
 _CHUNK_SIZE = 64
+_BACKEND_ENV = "FLAGGEMS_CHUNK_GDR_BACKEND"
+_BACKEND_RECURRENT = "recurrent"
+_BACKEND_OPTIMIZED = "optimized"
 
 
 def _validate_inputs(
@@ -36,8 +47,13 @@ def _validate_inputs(
         )
     if g.ndim != 3:
         raise ValueError("g must have rank [B, T, HV].")
-    if beta.ndim not in (3, 4):
-        raise ValueError("beta must have rank [B, T, HV] or [B, T, HV, V].")
+    if beta.ndim == 4:
+        raise NotImplementedError(
+            "chunk_gated_delta_rule_fwd supports scalar beta [B, T, HV] only; "
+            "value-dependent beta [B, T, HV, V] has no compatible FLA A workspace."
+        )
+    if beta.ndim != 3:
+        raise ValueError("beta must have rank [B, T, HV].")
     if q.shape != k.shape:
         raise ValueError(f"q and k must have the same shape, got {q.shape} and {k.shape}.")
 
@@ -47,12 +63,8 @@ def _validate_inputs(
         raise ValueError("v must share the same [B, T] dimensions as q and k.")
     if g.shape != (B, T, HV):
         raise ValueError(f"g must have shape {(B, T, HV)}, got {tuple(g.shape)}.")
-    if beta.ndim == 3 and beta.shape != (B, T, HV):
+    if beta.shape != (B, T, HV):
         raise ValueError(f"beta must have shape {(B, T, HV)}, got {tuple(beta.shape)}.")
-    if beta.ndim == 4 and beta.shape != (B, T, HV, V):
-        raise ValueError(
-            f"headwise beta must have shape {(B, T, HV, V)}, got {tuple(beta.shape)}."
-        )
     if H <= 0 or HV <= 0 or HV % H != 0:
         raise ValueError(f"HV must be a positive multiple of H, got H={H}, HV={HV}.")
     if T <= 0:
@@ -107,14 +119,14 @@ def _cu_seqlens_to_list(
 ) -> list[int]:
     if cu_seqlens is None:
         return [i * T for i in range(B + 1)]
-    # A single host sync is kept here because the Python wrapper constructs
-    # per-sequence state indices and the torch A workspace by segment.
-    cu_cpu = cu_seqlens.detach().cpu().tolist()
-    if cu_cpu[0] != 0 or cu_cpu[-1] != T:
+    # One host sync remains on the varlen path. The Python wrapper needs these
+    # offsets to reject zero-length segments and build recurrent state indices.
+    offsets = [int(x) for x in cu_seqlens.detach().cpu().tolist()]
+    if offsets[0] != 0 or offsets[-1] != T:
         raise ValueError("cu_seqlens must start at 0 and end at q.shape[1].")
-    if any(e < s for s, e in zip(cu_cpu[:-1], cu_cpu[1:])):
+    if any(end < start for start, end in zip(offsets[:-1], offsets[1:])):
         raise ValueError("cu_seqlens must be non-decreasing.")
-    return [int(x) for x in cu_cpu]
+    return offsets
 
 
 def _build_cu_seqlens(
@@ -223,10 +235,7 @@ def _compute_scalar_beta_a(
     beta: torch.Tensor,
     offsets: list[int],
     chunk_size: int = _CHUNK_SIZE,
-) -> torch.Tensor | None:
-    if beta.ndim == 4:
-        return None
-
+) -> torch.Tensor:
     B, T, _H, _K = k.shape
     HV = beta.shape[2]
     k_hv = _repeat_k_heads(k, HV)
@@ -261,7 +270,7 @@ def _compute_scalar_beta_a(
     return A
 
 
-def chunk_gated_delta_rule_fwd(
+def _optimized_chunk_gated_delta_rule_fwd(
     q: torch.Tensor,
     k: torch.Tensor,
     v: torch.Tensor,
@@ -270,26 +279,71 @@ def chunk_gated_delta_rule_fwd(
     scale: float,
     initial_state: torch.Tensor | None,
     output_final_state: bool,
-    cu_seqlens: torch.Tensor | None = None,
+    cu_seqlens: torch.Tensor | None,
 ):
-    """Forward-only chunk gated delta rule.
+    g_out, A = chunk_gated_delta_rule_fused_cumsum_kkt_solve_tril(
+        g=g.contiguous(),
+        k=k.contiguous(),
+        beta=beta.contiguous(),
+        cu_seqlens=None if cu_seqlens is None else cu_seqlens.contiguous(),
+        chunk_size=_CHUNK_SIZE,
+        output_dtype=k.dtype,
+    )
+    w, u = recompute_w_u_fwd(
+        k=k.contiguous(),
+        v=v.contiguous(),
+        beta=beta.contiguous(),
+        A=A,
+        g_cumsum=g_out,
+        cu_seqlens=None if cu_seqlens is None else cu_seqlens.contiguous(),
+    )
+    h, v_new, final_state = chunk_gated_delta_rule_fwd_h(
+        k=k.contiguous(),
+        w=w,
+        u=u,
+        g=g_out,
+        initial_state=initial_state,
+        output_final_state=output_final_state,
+        cu_seqlens=None if cu_seqlens is None else cu_seqlens.contiguous(),
+    )
+    o = chunk_fwd_o(
+        q=q.contiguous(),
+        k=k.contiguous(),
+        v=v_new,
+        h=h,
+        g=g_out,
+        scale=float(scale),
+        cu_seqlens=None if cu_seqlens is None else cu_seqlens.contiguous(),
+    )
+    if SUPPRESS_LEVEL >= 3:
+        return g_out, o, A, final_state, w, h, v_new
+    return g_out, o, A, final_state, None, None, None
 
-    Returns the FLA-compatible tuple ``(g, o, A, final_state, ..., ..., ...)``.
-    ``A`` is the solved intra-chunk workspace for scalar beta. For V-dependent
-    beta, FLA's ``[B, T, HV, 64]`` workspace cannot represent the per-value
-    recurrence, so ``A`` is returned as ``None`` instead of a misleading tensor.
-    """
-    logger.debug("GEMS CHUNK GATED DELTA RULE FWD")
-    B, T, _H, HV, K, V, N = _validate_inputs(q, k, v, g, beta, initial_state, cu_seqlens)
+
+def _recurrent_backed_chunk_gated_delta_rule_fwd(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    g: torch.Tensor,
+    beta: torch.Tensor,
+    scale: float,
+    initial_state: torch.Tensor | None,
+    output_final_state: bool,
+    cu_seqlens: torch.Tensor | None,
+    B: int,
+    T: int,
+    HV: int,
+    K: int,
+    V: int,
+    N: int,
+    offsets: list[int],
+):
     if SUPPRESS_LEVEL >= 3:
         raise RuntimeError(
-            "SUPPRESS_LEVEL >= 3 requests w/h/v_new debug tensors, which are not "
-            "materialized by the recurrent chunk_gated_delta_rule_fwd path."
+            "SUPPRESS_LEVEL >= 3 requests w/h/v_new debug tensors, which are only "
+            f"available with {_BACKEND_ENV}=optimized. The default CoreX-safe "
+            "chunk_gated_delta_rule_fwd path is recurrent-backed and forward-only."
         )
-    offsets = _cu_seqlens_to_list(T, B, cu_seqlens)
-    lengths = [end - start for start, end in zip(offsets[:-1], offsets[1:])]
-    if any(length == 0 for length in lengths):
-        raise ValueError("zero-length sequences in cu_seqlens are not supported.")
 
     q_work, k_work, v_work, g_work, beta_work = _prepare_recurrent_inputs(
         q, k, v, g, beta, cu_seqlens
@@ -327,5 +381,76 @@ def chunk_gated_delta_rule_fwd(
     g_out = _chunk_local_cumsum(g.contiguous(), offsets)
     A = _compute_scalar_beta_a(k.contiguous(), g_out, beta.contiguous(), offsets)
     final_state = recurrent_final if output_final_state else None
-
     return g_out, o, A, final_state, None, None, None
+
+
+def _selected_backend() -> str:
+    backend = os.getenv(_BACKEND_ENV, _BACKEND_RECURRENT).lower()
+    if backend in ("", "auto"):
+        backend = _BACKEND_RECURRENT
+    if backend not in (_BACKEND_RECURRENT, _BACKEND_OPTIMIZED):
+        raise ValueError(
+            f"{_BACKEND_ENV} must be '{_BACKEND_RECURRENT}' or '{_BACKEND_OPTIMIZED}'."
+        )
+    return backend
+
+
+def _optimized_backend_warning() -> str:
+    vendor = getattr(runtime.device, "vendor_name", "unknown")
+    return (
+        f"{_BACKEND_ENV}=optimized selects the fused chunk pipeline. It is not "
+        f"the default on vendor={vendor!r} because the CoreX/Iluvatar Triton "
+        "compiler aborts while lowering the fused cumsum/KKT/solve_tril kernel."
+    )
+
+
+def chunk_gated_delta_rule_fwd(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    g: torch.Tensor,
+    beta: torch.Tensor,
+    scale: float,
+    initial_state: torch.Tensor | None,
+    output_final_state: bool,
+    cu_seqlens: torch.Tensor | None = None,
+):
+    """Forward-only chunk gated delta rule.
+
+    By default this is a CoreX-safe recurrent-backed forward implementation.
+    Set ``FLAGGEMS_CHUNK_GDR_BACKEND=optimized`` to run the fused chunk pipeline
+    on environments where those Triton kernels compile.
+    """
+    logger.debug("GEMS CHUNK GATED DELTA RULE FWD")
+    B, T, _H, HV, K, V, N = _validate_inputs(
+        q, k, v, g, beta, initial_state, cu_seqlens
+    )
+    offsets = _cu_seqlens_to_list(T, B, cu_seqlens)
+    lengths = [end - start for start, end in zip(offsets[:-1], offsets[1:])]
+    if any(length == 0 for length in lengths):
+        raise ValueError("zero-length sequences in cu_seqlens are not supported.")
+
+    if _selected_backend() == _BACKEND_OPTIMIZED:
+        logger.warning(_optimized_backend_warning())
+        return _optimized_chunk_gated_delta_rule_fwd(
+            q, k, v, g, beta, scale, initial_state, output_final_state, cu_seqlens
+        )
+
+    return _recurrent_backed_chunk_gated_delta_rule_fwd(
+        q,
+        k,
+        v,
+        g,
+        beta,
+        scale,
+        initial_state,
+        output_final_state,
+        cu_seqlens,
+        B,
+        T,
+        HV,
+        K,
+        V,
+        N,
+        offsets,
+    )

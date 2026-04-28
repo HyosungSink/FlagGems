@@ -27,7 +27,8 @@ or `tests/test_FLA/test_chunk_gated_delta_rule.py`.
 - Contiguous `q/k/v`.
 - Optional non-contiguous `q/k/v` views after the base path passes.
 - `beta` shaped `[B, T, HV]`.
-- `beta` shaped `[B, T, HV, V]` if supported.
+- `beta` shaped `[B, T, HV]`.
+- `beta` shaped `[B, T, HV, V]` is explicitly rejected for this PR.
 - `initial_state is None`.
 - `initial_state` provided.
 - Final state returned or updated if supported.
@@ -36,7 +37,9 @@ or `tests/test_FLA/test_chunk_gated_delta_rule.py`.
 - `cu_seqlens` in both `torch.int32` and `torch.int64`.
 - Cross-chunk sequence lengths such as `T=65` and `T=129`.
 - Scalar beta returns a real `[B, T, HV, 64]` `A` workspace.
-- Value-dependent beta returns `A is None` rather than a fake workspace.
+- Scalar beta returns a real `[B, T, HV, 64]` `A` workspace.
+- Default recurrent-backed path rejects `SUPPRESS_LEVEL >= 3`; opt-in
+  optimized backend comparison is skipped unless the environment can compile it.
 
 ## Numerical Checks
 

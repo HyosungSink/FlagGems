@@ -12,11 +12,17 @@ Preferred baselines:
 
 - FLA `chunk_gated_delta_rule`.
 - Megatron Core torch-native `torch_chunk_gated_delta_rule`, if available.
+- Existing optimized recurrent baseline, to show the cost of the
+  recurrent-backed fallback separately from slow torch correctness references.
 
 If the external reference is unavailable in CI, keep benchmark imports guarded
 and fall back to an explicitly named Megatron/FLA torch chunk-formula reference.
 Do not report speedup against a per-token Python recurrence as the competition
 performance baseline.
+
+If the optimized FLA/chunk kernel cannot compile on the target CoreX/Iluvatar
+runner, print the unavailability reason and label all timings as recurrent-
+backed fallback evidence rather than optimized chunk-kernel performance.
 
 ## Shapes
 

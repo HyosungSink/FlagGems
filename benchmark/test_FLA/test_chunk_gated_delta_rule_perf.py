@@ -8,6 +8,7 @@ import torch
 import torch.nn.functional as F
 
 import flag_gems
+from flag_gems.fused.FLA.fused_recurrent import fused_recurrent_gated_delta_rule_fwd
 
 
 CUDA_AVAILABLE = torch.cuda.is_available() and flag_gems.device == "cuda"
@@ -156,6 +157,45 @@ def _gems_op(q, k, v, g, beta, scale, initial_state, output_final_state=True):
     )
 
 
+def _fused_recurrent_core_baseline(
+    q,
+    k,
+    v,
+    g,
+    beta,
+    scale,
+    initial_state,
+    output_final_state=True,
+):
+    B, T, _H, K = q.shape
+    HV, V = v.shape[2], v.shape[-1]
+    q_work = q.contiguous().reshape(1, B * T, *q.shape[2:])
+    k_work = k.contiguous().reshape(1, B * T, *k.shape[2:])
+    v_work = v.contiguous().reshape(1, B * T, *v.shape[2:])
+    g_work = g.contiguous().reshape(1, B * T, *g.shape[2:])
+    beta_work = beta.contiguous().reshape(1, B * T, *beta.shape[2:])
+    cu_work = torch.arange(0, (B + 1) * T, T, device=q.device, dtype=torch.long)
+    state_indices = torch.arange(B, device=q.device, dtype=torch.long)[:, None]
+    state_indices = state_indices.expand(B, T).contiguous()
+    recurrent_initial = initial_state.detach().to(torch.float32).contiguous().clone()
+    out_work, final = fused_recurrent_gated_delta_rule_fwd(
+        q=q_work,
+        k=k_work,
+        v=v_work,
+        g=g_work,
+        beta=beta_work,
+        scale=float(scale),
+        initial_state=recurrent_initial,
+        inplace_final_state=True,
+        cu_seqlens=cu_work,
+        ssm_state_indices=state_indices,
+        num_accepted_tokens=None,
+        use_qk_l2norm_in_kernel=False,
+    )
+    final = final if output_final_state else None
+    return None, out_work.reshape(B, T, HV, V), None, final, None, None, None
+
+
 def _time_ms(fn, args, iterations: int) -> float:
     torch.cuda.synchronize()
     start = time.perf_counter()
@@ -183,24 +223,41 @@ def test_perf_chunk_gated_delta_rule(shape: BenchShape):
     with torch.no_grad():
         gems_result = _gems_op(*args)
         ref_result = _megatron_torch_chunk_reference(*args)
+        recurrent_result = _fused_recurrent_core_baseline(*args)
         torch.testing.assert_close(gems_result[0], ref_result[0], rtol=0, atol=0)
         torch.testing.assert_close(gems_result[1], ref_result[1], **_tol(shape.dtype))
         torch.testing.assert_close(gems_result[2], ref_result[2], **_tol(shape.dtype))
         torch.testing.assert_close(gems_result[3], ref_result[3], **_tol(shape.dtype))
+        torch.testing.assert_close(
+            recurrent_result[1], ref_result[1], **_tol(shape.dtype)
+        )
+        torch.testing.assert_close(
+            recurrent_result[3], ref_result[3], **_tol(shape.dtype)
+        )
 
         for _ in range(3):
             _gems_op(*args)
+            _fused_recurrent_core_baseline(*args)
             _megatron_torch_chunk_reference(*args)
         gems_iters = 20 if shape.T <= 128 else 10
+        recurrent_iters = 20 if shape.T <= 128 else 10
         ref_iters = 10 if shape.T <= 128 else 3
         gems_ms = _time_ms(_gems_op, args, gems_iters)
+        recurrent_ms = _time_ms(
+            _fused_recurrent_core_baseline, args, recurrent_iters
+        )
         ref_ms = _time_ms(_megatron_torch_chunk_reference, args, ref_iters)
 
-    speedup = ref_ms / gems_ms if gems_ms > 0 else float("inf")
+    reference_ratio = ref_ms / gems_ms if gems_ms > 0 else float("inf")
+    recurrent_overhead = gems_ms / recurrent_ms if recurrent_ms > 0 else float("inf")
     print(
         "chunk_gated_delta_rule "
+        "backend=recurrent_backed "
+        "optimized_chunk_kernel=unavailable_corex_iluvatar_triton_lowering_assert "
         f"shape={shape.name} B={shape.B} T={shape.T} H={shape.H} HV={shape.HV} "
         f"K={shape.K} V={shape.V} dtype={shape.dtype} "
-        f"gems_ms={gems_ms:.3f} megatron_torch_chunk_ref_ms={ref_ms:.3f} "
-        f"chunk_ref_speedup={speedup:.2f}x"
+        f"gems_ms={gems_ms:.3f} fused_recurrent_core_ms={recurrent_ms:.3f} "
+        f"megatron_torch_chunk_ref_ms={ref_ms:.3f} "
+        f"torch_ref_ratio={reference_ratio:.2f}x "
+        f"overhead_vs_fused_recurrent={recurrent_overhead:.2f}x"
     )

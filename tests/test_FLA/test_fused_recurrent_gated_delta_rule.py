@@ -1,5 +1,7 @@
 import random
 import os
+import subprocess
+import sys
 from typing import Dict, List
 
 import pytest
@@ -8,17 +10,51 @@ import torch.nn.functional as F
 
 import flag_gems
 
-# Importing vLLM after FlagGems can abort the CoreX process via ixformer duplicate
-# native op registration. Keep the external reference opt-in; the torch fallback
-# test below still exercises this file by default.
-if os.getenv("FLAGGEMS_ENABLE_VLLM_REFERENCE", "0") == "1":
+
+def _probe_vllm_reference_import() -> tuple[bool, str]:
+    if os.getenv("FLAGGEMS_DISABLE_VLLM_REFERENCE", "0") == "1":
+        return False, "disabled by FLAGGEMS_DISABLE_VLLM_REFERENCE=1"
+    code = """
+import flag_gems
+from vllm.model_executor.layers.fla.ops import fused_recurrent_gated_delta_rule
+print("ok")
+"""
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "vLLM import probe timed out"
+    if proc.returncode == 0:
+        return True, "vLLM reference import probe passed"
+    combined = f"{proc.stdout}\n{proc.stderr}"
+    if "Duplicate registration" in combined or "Fatal Python error: Aborted" in combined:
+        return (
+            False,
+            "vLLM import probe aborts on CoreX/ixformer duplicate native op registration",
+        )
+    if "No module named" in combined:
+        for line in combined.splitlines():
+            if "No module named" in line:
+                return False, line.strip()
+    detail = (proc.stderr or proc.stdout).strip().splitlines()
+    return False, detail[-1] if detail else f"probe exited {proc.returncode}"
+
+
+VLLM_IMPORT_SAFE, VLLM_SKIP_REASON = _probe_vllm_reference_import()
+if VLLM_IMPORT_SAFE:
     try:
         from vllm.model_executor.layers.fla.ops import (
             fused_recurrent_gated_delta_rule as base_fused_recurrent_gated_delta_rule,
         )
 
         VLLM_AVAILABLE = True
-    except Exception:  # pragma: no cover - optional dependency guard
+    except Exception as exc:  # pragma: no cover - optional dependency guard
+        VLLM_SKIP_REASON = f"vLLM import failed after safe probe: {exc!r}"
         base_fused_recurrent_gated_delta_rule = None
         VLLM_AVAILABLE = False
 else:
@@ -229,7 +265,7 @@ def test_fused_recurrent_gated_delta_rule_matches_torch_reference(beta_has_dim_v
 
 @pytest.mark.skipif(
     not (VLLM_AVAILABLE and CUDA_AVAILABLE),
-    reason="requires vLLM installed and CUDA device",
+    reason=f"requires safe vLLM reference import and CUDA device: {VLLM_SKIP_REASON}",
 )
 @pytest.mark.fused_recurrent_gated_delta_rule
 @pytest.mark.parametrize("cfg", FusedRecurrentGatedDeltaRuleTestKit.get_test_params())

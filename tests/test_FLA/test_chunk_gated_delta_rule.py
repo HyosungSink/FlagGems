@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 import pytest
@@ -24,7 +25,6 @@ class ChunkCase:
     V: int
     dtype: torch.dtype
     g_dtype: torch.dtype | None = None
-    beta_has_dim_v: bool = False
     use_initial_state: bool = False
     cu_seqlens: tuple[int, ...] | None = None
     cu_dtype: torch.dtype = torch.int64
@@ -94,7 +94,7 @@ CASES = [
         cu_dtype=torch.int32,
     ),
     ChunkCase(
-        "varlen_int64_headwise_beta_fp16",
+        "varlen_int64_cross64_fp16",
         1,
         129,
         2,
@@ -102,7 +102,6 @@ CASES = [
         32,
         32,
         torch.float16,
-        beta_has_dim_v=True,
         use_initial_state=True,
         cu_seqlens=(0, 63, 129),
         cu_dtype=torch.int64,
@@ -141,16 +140,9 @@ def _build_inputs(case: ChunkCase):
     g = F.logsigmoid(
         torch.randn((case.B, case.T, case.HV), device=flag_gems.device, dtype=g_dtype)
     )
-    if case.beta_has_dim_v:
-        beta = torch.rand(
-            (case.B, case.T, case.HV, case.V),
-            device=flag_gems.device,
-            dtype=case.dtype,
-        ).sigmoid()
-    else:
-        beta = torch.rand(
-            (case.B, case.T, case.HV), device=flag_gems.device, dtype=case.dtype
-        ).sigmoid()
+    beta = torch.rand(
+        (case.B, case.T, case.HV), device=flag_gems.device, dtype=case.dtype
+    ).sigmoid()
 
     cu_seqlens = None
     nseq = case.B
@@ -278,41 +270,8 @@ def _reference_scalar_chunk(q, k, v, g, beta, scale, initial_state, cu_seqlens):
     return g_cumsum, out.to(v.dtype), A, state
 
 
-def _reference_recurrent(q, k, v, g, beta, scale, initial_state, cu_seqlens):
-    B, T, _, K = q.shape
-    HV, V = v.shape[2], v.shape[-1]
-    g_cumsum = _reference_chunk_local_cumsum(g, cu_seqlens)
-    q_hv = _repeat_qk_heads(q.float(), HV)
-    k_hv = _repeat_qk_heads(k.float(), HV)
-    nseq = B if cu_seqlens is None else cu_seqlens.numel() - 1
-    state = (
-        torch.zeros((nseq, HV, K, V), device=q.device, dtype=torch.float32)
-        if initial_state is None
-        else initial_state.float().clone()
-    )
-    out = torch.empty((B, T, HV, V), device=q.device, dtype=torch.float32)
-
-    for batch, seq, seq_start, seq_end in _segments(B, T, cu_seqlens):
-        for pos in range(seq_start, seq_end):
-            state[seq] = state[seq] * g[batch, pos].float().exp()[..., None, None]
-            delta = v[batch, pos].float() - torch.einsum(
-                "hkv,hk->hv", state[seq], k_hv[batch, pos]
-            )
-            if beta.ndim == 3:
-                delta = delta * beta[batch, pos].float()[..., None]
-            else:
-                delta = delta * beta[batch, pos].float()
-            state[seq] = state[seq] + k_hv[batch, pos][..., None] * delta[..., None, :]
-            out[batch, pos] = torch.einsum(
-                "hk,hkv->hv", q_hv[batch, pos] * scale, state[seq]
-            )
-    return g_cumsum, out.to(v.dtype), None, state
-
-
 def _reference(q, k, v, g, beta, scale, initial_state, cu_seqlens):
-    if beta.ndim == 3:
-        return _reference_scalar_chunk(q, k, v, g, beta, scale, initial_state, cu_seqlens)
-    return _reference_recurrent(q, k, v, g, beta, scale, initial_state, cu_seqlens)
+    return _reference_scalar_chunk(q, k, v, g, beta, scale, initial_state, cu_seqlens)
 
 
 def _tol(dtype: torch.dtype, final_state: bool = False):
@@ -355,14 +314,10 @@ def test_chunk_gated_delta_rule_matches_fla_megatron_reference(case: ChunkCase):
     torch.testing.assert_close(out, ref_out, **_tol(case.dtype))
     torch.testing.assert_close(final_state, ref_final, **_tol(case.dtype, final_state=True))
 
-    if beta.ndim == 3:
-        assert A is not None
-        assert A.shape == (case.B, case.T, case.HV, CHUNK_SIZE)
-        assert A.dtype == case.dtype
-        torch.testing.assert_close(A, ref_A, **_tol(case.dtype))
-    else:
-        assert A is None
-        assert ref_A is None
+    assert A is not None
+    assert A.shape == (case.B, case.T, case.HV, CHUNK_SIZE)
+    assert A.dtype == case.dtype
+    torch.testing.assert_close(A, ref_A, **_tol(case.dtype))
 
 
 @pytest.mark.skipif(not CUDA_AVAILABLE, reason="chunk_gated_delta_rule requires CUDA")
@@ -434,6 +389,12 @@ def test_chunk_gated_delta_rule_rejects_invalid_shapes_and_cu_seqlens():
             q, k, v[:, :, :2], g[:, :, :2], beta[:, :, :2], 1.0, None, False, bad_dtype
         )
 
+    beta_4d = torch.randn((1, 2, 2, 16), device=flag_gems.device, dtype=torch.float16)
+    with pytest.raises(NotImplementedError, match="scalar beta"):
+        flag_gems.chunk_gated_delta_rule_fwd(
+            q, k, v[:, :, :2], g[:, :, :2], beta_4d, 1.0, None, False
+        )
+
 
 @pytest.mark.skipif(not CUDA_AVAILABLE, reason="chunk_gated_delta_rule requires CUDA")
 @pytest.mark.chunk_gated_delta_rule
@@ -447,3 +408,50 @@ def test_chunk_gated_delta_rule_rejects_suppress_level_debug_path(monkeypatch):
         flag_gems.chunk_gated_delta_rule_fwd(
             q, k, v, g, beta, case.K**-0.5, initial_state, True, cu_seqlens
         )
+
+
+@pytest.mark.skipif(not CUDA_AVAILABLE, reason="chunk_gated_delta_rule requires CUDA")
+@pytest.mark.chunk_gated_delta_rule
+def test_chunk_gated_delta_rule_long_sequence_error_stats():
+    case = ChunkCase("long_stats", 1, 257, 2, 4, 32, 32, torch.float16)
+    q, k, v, g, beta, initial_state, cu_seqlens = _build_inputs(case)
+    scale = case.K**-0.5
+    _, out, A, final_state, *_ = flag_gems.chunk_gated_delta_rule_fwd(
+        q, k, v, g, beta, scale, initial_state, True, cu_seqlens
+    )
+    _, ref_out, ref_A, ref_final = _reference(
+        q, k, v, g, beta, scale, initial_state, cu_seqlens
+    )
+    out_abs = (out.float() - ref_out.float()).abs().max().item()
+    a_abs = (A.float() - ref_A.float()).abs().max().item()
+    final_abs = (final_state.float() - ref_final.float()).abs().max().item()
+    print(
+        "long_sequence_error_stats "
+        f"T={case.T} dtype={case.dtype} "
+        f"out_max_abs={out_abs:.6f} A_max_abs={a_abs:.6f} "
+        f"final_state_max_abs={final_abs:.6f}"
+    )
+    torch.testing.assert_close(out, ref_out, **_tol(case.dtype))
+    torch.testing.assert_close(A, ref_A, **_tol(case.dtype))
+    torch.testing.assert_close(final_state, ref_final, **_tol(case.dtype, final_state=True))
+
+
+@pytest.mark.skipif(
+    os.getenv("FLAGGEMS_CHUNK_GDR_RUN_OPTIMIZED_REFERENCE", "0") != "1",
+    reason="optimized chunk reference is opt-in because CoreX/Iluvatar Triton aborts",
+)
+@pytest.mark.skipif(not CUDA_AVAILABLE, reason="chunk_gated_delta_rule requires CUDA")
+@pytest.mark.chunk_gated_delta_rule
+def test_chunk_gated_delta_rule_matches_optimized_chunk_backend(monkeypatch):
+    case = ChunkCase("optimized_compare", 1, 65, 2, 4, 32, 32, torch.float16)
+    q, k, v, g, beta, initial_state, cu_seqlens = _build_inputs(case)
+    scale = case.K**-0.5
+    default_result = flag_gems.chunk_gated_delta_rule_fwd(
+        q, k, v, g, beta, scale, initial_state, True, cu_seqlens
+    )
+    monkeypatch.setenv("FLAGGEMS_CHUNK_GDR_BACKEND", "optimized")
+    optimized_result = flag_gems.chunk_gated_delta_rule_fwd(
+        q, k, v, g, beta, scale, initial_state, True, cu_seqlens
+    )
+    for left, right in zip(default_result[:4], optimized_result[:4]):
+        torch.testing.assert_close(left, right, **_tol(case.dtype))
